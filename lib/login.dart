@@ -3,6 +3,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shadcn_ui/src/components/form/fields/input.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'onboarding_page.dart';
+import 'package:flutter/services.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -192,6 +193,22 @@ class _LoginPageState extends State<LoginPage> {
                               controller: _phoneController,
                               keyboardType: TextInputType.phone,
                               validator: _validatePhone,
+                              maxLength: 10,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              onChanged: (value) {
+                                if (value.length > 10) {
+                                  _phoneController.text = value.substring(
+                                    0,
+                                    10,
+                                  );
+                                  _phoneController.selection =
+                                      TextSelection.fromPosition(
+                                        TextPosition(offset: 10),
+                                      );
+                                }
+                              },
                             ),
                           ),
                         ],
@@ -209,7 +226,8 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 16),
                 ShadButton(
-                  onPressed: _isPhoneValid && !_isLoading ? _verifyPhone : null,
+                  onPressed: _isLoading || !_isPhoneValid ? null : _verifyPhone,
+                  enabled: _isPhoneValid && !_isLoading,
                   child: _isLoading
                       ? const CircularProgressIndicator(strokeWidth: 2)
                       : const Text('Send OTP'),
@@ -222,6 +240,7 @@ class _LoginPageState extends State<LoginPage> {
                     maxLength: 6,
                     keyboardType: TextInputType.number,
                     validator: _validateOTP,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     onChanged: (value) {
                       _otpController.text = value;
                       setState(() {
@@ -244,9 +263,14 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 16),
                 ShadButton(
-                  onPressed: _otpValue.length == 6 && !_isLoading
-                      ? _signInWithOTP
-                      : null,
+                  onPressed:
+                      _isLoading ||
+                          !RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue)
+                      ? null
+                      : _signInWithOTP,
+                  enabled:
+                      !_isLoading &&
+                      RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue),
                   child: _isLoading
                       ? const CircularProgressIndicator(strokeWidth: 2)
                       : const Text('Verify OTP'),
