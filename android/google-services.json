@@ -1,0 +1,82 @@
+{
+  "project_info": {
+    "project_number": "894725781218",
+    "project_id": "sport-eventsapp",
+    "storage_bucket": "sport-eventsapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:894725781218:android:5095d7739a47f90957d0bb",
+        "android_client_info": {
+          "package_name": "com.anonymous.SportsEventApp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "894725781218-47r876c9o6810sdfa439c34gc8g7i9nr.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmfKD3ZiDMd2vBB6fLVOX6-vDEKmVdI2g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "894725781218-47r876c9o6810sdfa439c34gc8g7i9nr.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "894725781218-fk10sc9gak53sdu94u8ua8dh7fbhh02g.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.asteroidea"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:894725781218:android:59dbd53c70330ccc57d0bb",
+        "android_client_info": {
+          "package_name": "com.example.asteroidea"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "894725781218-47r876c9o6810sdfa439c34gc8g7i9nr.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmfKD3ZiDMd2vBB6fLVOX6-vDEKmVdI2g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "894725781218-47r876c9o6810sdfa439c34gc8g7i9nr.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "894725781218-fk10sc9gak53sdu94u8ua8dh7fbhh02g.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.asteroidea"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
