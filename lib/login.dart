@@ -3,7 +3,9 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shadcn_ui/src/components/form/fields/input.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'onboarding_page.dart';
+import 'landing_page.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -23,6 +25,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _otpSent = false;
   bool _isPhoneValid = false;
   String _otpValue = '';
+  String? _otpError;
 
   @override
   void initState() {
@@ -114,9 +117,18 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _signInWithOTP() async {
     if (!_otpFormKey.currentState!.validate()) return;
+    if (_verificationId == null) {
+      setState(() {
+        _error = null;
+        _otpError =
+            'We hit a snag. Try again in a bit, or ping us if you need help.';
+      });
+      return;
+    }
     setState(() {
       _isLoading = true;
       _error = null;
+      _otpError = null;
     });
     try {
       final credential = PhoneAuthProvider.credential(
@@ -128,17 +140,48 @@ class _LoginPageState extends State<LoginPage> {
       );
       setState(() {
         _isLoading = false;
+        _otpError = null;
       });
-      // Check if user is new
-      if (userCredential.additionalUserInfo?.isNewUser == true) {
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const OnboardingPage()),
-        );
+      final user = userCredential.user;
+      final isNewUser = userCredential.additionalUserInfo?.isNewUser == true;
+      if (user != null && isNewUser) {
+        // Save user credentials to Firestore
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'phone': user.phoneNumber,
+          'createdAt': FieldValue.serverTimestamp(),
+          'onboardingComplete': false,
+        });
+      }
+      // Check onboarding status
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        final onboardingComplete =
+            userDoc.data()?['onboardingComplete'] == true;
+        if (isNewUser || !onboardingComplete) {
+          if (!mounted) return;
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const OnboardingPage()),
+          );
+        } else {
+          if (!mounted) return;
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LandingPage()),
+          );
+        }
       }
     } catch (e) {
+      String? errorMsg;
+      if (e is FirebaseAuthException && e.code == 'invalid-verification-code') {
+        errorMsg = 'Invalid OTP Code. Please try again.';
+      } else {
+        errorMsg =
+            'We hit a snag. Try again in a bit, or ping us if you need help.';
+      }
       setState(() {
-        _error = e.toString();
+        _otpError = errorMsg;
         _isLoading = false;
       });
     }
@@ -158,11 +201,11 @@ class _LoginPageState extends State<LoginPage> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              if (_error != null)
-                ShadAlert.destructive(
-                  title: const Text('Error'),
-                  description: Text(_error!),
-                ),
+              // if (_error != null)
+              //   ShadAlert.destructive(
+              //     title: const Text('Error'),
+              //     description: Text(_error!),
+              //   ),
               if (!_otpSent) ...[
                 Form(
                   key: _formKey,
@@ -225,13 +268,38 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ShadButton(
-                  onPressed: _isLoading || !_isPhoneValid ? null : _verifyPhone,
-                  enabled: _isPhoneValid && !_isLoading,
-                  child: _isLoading
-                      ? const CircularProgressIndicator(strokeWidth: 2)
-                      : const Text('Send OTP'),
+                SizedBox(
+                  width: 160,
+                  height: 48,
+                  child: ShadButton(
+                    onPressed: _isLoading || !_isPhoneValid
+                        ? null
+                        : _verifyPhone,
+                    enabled: _isPhoneValid && !_isLoading,
+                    child: _isLoading
+                        ? Container(
+                            width: 90,
+                            height: 24,
+                            alignment: Alignment.center,
+                            color: Colors.transparent,
+                            child: const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : const Text('Send OTP'),
+                  ),
                 ),
+                if (_error != null && !_otpSent)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      'We hit a snag. Try again in a bit, or ping us if you need help.',
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
               ] else ...[
                 Form(
                   key: _otpFormKey,
@@ -262,19 +330,42 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ShadButton(
-                  onPressed:
-                      _isLoading ||
-                          !RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue)
-                      ? null
-                      : _signInWithOTP,
-                  enabled:
-                      !_isLoading &&
-                      RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue),
-                  child: _isLoading
-                      ? const CircularProgressIndicator(strokeWidth: 2)
-                      : const Text('Verify OTP'),
+                SizedBox(
+                  width: 160,
+                  height: 48,
+                  child: ShadButton(
+                    onPressed:
+                        _isLoading ||
+                            !RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue)
+                        ? null
+                        : _signInWithOTP,
+                    enabled:
+                        !_isLoading &&
+                        RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue),
+                    child: _isLoading
+                        ? Container(
+                            width: 90,
+                            height: 24,
+                            alignment: Alignment.center,
+                            color: Colors.transparent,
+                            child: const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : const Text('Verify OTP'),
+                  ),
                 ),
+                if (_otpError != null && _otpSent)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      _otpError!,
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
               ],
             ],
           ),
