@@ -3,9 +3,11 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shadcn_ui/src/components/form/fields/input.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'onboarding_page.dart';
-import 'landing_page.dart';
+import 'home_page.dart';
+import 'main_navigation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -166,9 +168,10 @@ class _LoginPageState extends State<LoginPage> {
             MaterialPageRoute(builder: (context) => const OnboardingPage()),
           );
         } else {
+          // Navigate to main app
           if (!mounted) return;
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const LandingPage()),
+            MaterialPageRoute(builder: (context) => const MainNavigation()),
           );
         }
       }

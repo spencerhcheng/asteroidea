@@ -7,7 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'landing_page.dart';
+import 'home_page.dart';
+import 'profile_page.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class OnboardingPage extends StatefulWidget {
@@ -24,6 +25,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
   // Step 1 fields
   String _firstName = '';
   String _lastName = '';
+  String _gender = '';
   File? _profilePhoto;
   bool _photoSkipped = false;
 
@@ -79,10 +81,10 @@ class _OnboardingPageState extends State<OnboardingPage> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16.0),
       child: ShadProgress(
-        value: (_currentStep + 1) / 4,
-        backgroundColor: Colors.grey[300],
-        color: Colors.greenAccent,
-        borderRadius: BorderRadius.circular(6),
+        value: (_currentStep + 1) / 4 * 100,
+        backgroundColor: Colors.grey[200],
+        color: Colors.lightBlue,
+        borderRadius: BorderRadius.circular(4),
       ),
     );
   }
@@ -188,11 +190,31 @@ class _OnboardingPageState extends State<OnboardingPage> {
               labelText: 'Last Name',
               border: OutlineInputBorder(),
             ),
-            textInputAction: TextInputAction.done,
+            textInputAction: TextInputAction.next,
             onChanged: (v) => setState(() => _lastName = v.trim()),
             validator: (v) => v == null || v.trim().isEmpty
                 ? 'Please enter your last name'
                 : null,
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            value: _gender.isNotEmpty ? _gender : null,
+            decoration: const InputDecoration(
+              labelText: 'Gender',
+              border: OutlineInputBorder(),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'Male', child: Text('Male')),
+              DropdownMenuItem(value: 'Female', child: Text('Female')),
+              DropdownMenuItem(value: 'Non-binary', child: Text('Non-binary')),
+              DropdownMenuItem(
+                value: 'Prefer not to say',
+                child: Text('Prefer not to say'),
+              ),
+            ],
+            onChanged: (value) => setState(() => _gender = value ?? ''),
+            validator: (v) =>
+                v == null || v.isEmpty ? 'Please select your gender' : null,
           ),
           const SizedBox(height: 24),
           ShadButton(
@@ -254,7 +276,12 @@ class _OnboardingPageState extends State<OnboardingPage> {
                                 ).colorScheme.primary.withOpacity(0.15)
                               : Colors.grey[200],
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.white, width: 2),
+                          border: Border.all(
+                            color: isSelected
+                                ? Colors.green
+                                : Colors.transparent,
+                            width: 2,
+                          ),
                         ),
                         child: Center(
                           child: Column(
@@ -262,12 +289,34 @@ class _OnboardingPageState extends State<OnboardingPage> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              Icon(
-                                activity['icon'] as IconData,
-                                size: 48,
-                                color: isSelected
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Colors.black54,
+                              Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Icon(
+                                    activity['icon'] as IconData,
+                                    size: 48,
+                                    color: isSelected
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Colors.black54,
+                                  ),
+                                  if (isSelected)
+                                    Positioned(
+                                      top: -16,
+                                      right: -16,
+                                      child: Container(
+                                        decoration: const BoxDecoration(
+                                          color: Colors.green,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        padding: const EdgeInsets.all(4),
+                                        child: const Icon(
+                                          Icons.check,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                               const SizedBox(height: 12),
                               Text(
@@ -284,28 +333,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
                           ),
                         ),
                       ),
-                      if (isSelected)
-                        Positioned(
-                          top: -5,
-                          right: -10,
-                          child: Material(
-                            color: Colors.transparent,
-                            elevation: 4,
-                            shape: const CircleBorder(),
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                color: Colors.green,
-                                shape: BoxShape.circle,
-                              ),
-                              padding: const EdgeInsets.all(8),
-                              child: const Icon(
-                                Icons.check,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -322,11 +349,10 @@ class _OnboardingPageState extends State<OnboardingPage> {
               : null,
           child: const Text('Next'),
         ),
-        const SizedBox(height: 12),
-        // Always reserve space for validation message (height: 22)
-        SizedBox(
-          height: 22,
-          child: showValidation
+        Container(
+          height: 32,
+          alignment: Alignment.center,
+          child: _selectedActivities.isEmpty
               ? const Text(
                   'Please select at least one activity.',
                   style: TextStyle(color: Colors.red, fontSize: 14),
@@ -431,10 +457,12 @@ class _OnboardingPageState extends State<OnboardingPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('firstName', _firstName);
     await prefs.setString('lastName', _lastName);
+    await prefs.setString('gender', _gender);
     await prefs.setBool('photoSkipped', _photoSkipped);
     await prefs.setStringList('activities', _selectedActivities.toList());
     await prefs.setString('zipCode', _zipCode);
     await prefs.setBool('usingLocation', _usingLocation);
+    await prefs.setBool('onboarding_complete', true);
   }
 
   // Save onboarding progress to Firestore
@@ -444,6 +472,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     final data = {
       'firstName': _firstName,
       'lastName': _lastName,
+      'gender': _gender,
       'photoSkipped': _photoSkipped,
       'activities': _selectedActivities.toList(),
       'zipCode': _zipCode,
@@ -495,10 +524,23 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 : null,
           ),
           title: Text('$_firstName $_lastName'),
-          subtitle: Text(
-            _selectedActivities
-                .map((a) => a[0].toUpperCase() + a.substring(1))
-                .join(', '),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _selectedActivities
+                    .map((a) => a[0].toUpperCase() + a.substring(1))
+                    .join(', '),
+              ),
+              if (_gender.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2.0),
+                  child: Text(
+                    'Gender: $_gender',
+                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  ),
+                ),
+            ],
           ),
         ),
         const SizedBox(height: 12),
@@ -514,9 +556,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
             await _saveLocalProgress();
             await _saveFirestoreProgress();
             if (!mounted) return;
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => const LandingPage()),
-            );
+            Navigator.of(context).pushReplacementNamed('/main');
           },
           child: const Text('Finish'),
         ),
