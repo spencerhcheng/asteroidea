@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="300" viewBox="0 0 400 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Sky -->
+  <rect width="400" height="300" fill="#E3F2FD"/>
+  
+  <!-- Sun -->
+  <circle cx="350" cy="50" r="30" fill="#FFD54F"/>
+  
+  <!-- Mountains -->
+  <path d="M0 120L100 50L200 150L300 80L400 140L400 300L0 300Z" fill="#90CAF9"/>
+  <path d="M0 180L80 120L160 200L240 140L320 190L400 160L400 300L0 300Z" fill="#64B5F6"/>
+  
+  <!-- Trail -->
+  <path d="M50 300C100 250 150 280 200 240C250 200 300 220 350 180" stroke="#795548" stroke-width="8" stroke-linecap="round" fill="none"/>
+  
+  <!-- Trees -->
+  <g transform="translate(80,160)">
+    <path d="M0 40L-20 40L0 0L20 40Z" fill="#4CAF50"/>
+    <rect x="-4" y="40" width="8" height="12" fill="#795548"/>
+  </g>
+  <g transform="translate(320,140)">
+    <path d="M0 40L-20 40L0 0L20 40Z" fill="#4CAF50"/>
+    <rect x="-4" y="40" width="8" height="12" fill="#795548"/>
+  </g>
+  
+  <!-- Small bushes -->
+  <circle cx="120" cy="280" r="10" fill="#81C784"/>
+  <circle cx="280" cy="260" r="8" fill="#81C784"/>
+  <circle cx="180" cy="270" r="12" fill="#81C784"/>
+</svg>

@@ -3,8 +3,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'landing_page.dart';
 import 'login.dart';
+import 'main_navigation.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,14 +18,64 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ShadApp.custom(
-      themeMode: ThemeMode.dark,
+      themeMode: ThemeMode.light,
       darkTheme: ShadThemeData(
-        brightness: Brightness.dark,
-        colorScheme: const ShadSlateColorScheme.dark(),
+        brightness: Brightness.light,
+        colorScheme: const ShadSlateColorScheme.light(),
       ),
       appBuilder: (context) {
         return MaterialApp(
-          theme: Theme.of(context),
+          theme: ThemeData(
+            brightness: Brightness.light,
+            primaryColor: Colors.blueGrey[900],
+            colorScheme: ColorScheme.light(
+              primary: Colors.blueGrey[900]!,
+              secondary: Colors.blueAccent,
+              background: Colors.white,
+              surface: Colors.grey[100]!,
+              onPrimary: Colors.white,
+              onSecondary: Colors.white,
+              onBackground: Colors.black,
+              onSurface: Colors.black,
+            ),
+            fontFamily: 'Helvetica Neue',
+            textTheme: const TextTheme(
+              displayLarge: TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+              titleLarge: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+              bodyMedium: TextStyle(fontSize: 16, color: Colors.black87),
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+            ),
+            buttonTheme: const ButtonThemeData(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8)),
+              ),
+            ),
+            scaffoldBackgroundColor: Colors.white,
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              iconTheme: IconThemeData(color: Colors.black),
+              titleTextStyle: TextStyle(
+                color: Colors.black,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
           builder: (context, child) {
             return ShadAppBuilder(child: child!);
           },
@@ -33,6 +83,7 @@ class MyApp extends StatelessWidget {
           routes: {
             '/': (context) => const LandingPage(),
             '/login': (context) => const LoginPage(),
+            '/main': (context) => const MainNavigation(),
           },
         );
       },
