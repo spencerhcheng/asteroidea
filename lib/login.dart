@@ -1,13 +1,39 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
-import 'package:shadcn_ui/src/components/form/fields/input.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'onboarding_page.dart';
-import 'home_page.dart';
 import 'main_navigation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+class _PhoneNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digitsOnly = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+    
+    // Limit to 10 digits
+    if (digitsOnly.length > 10) {
+      return oldValue;
+    }
+    
+    String formatted;
+    if (digitsOnly.length <= 3) {
+      formatted = digitsOnly;
+    } else if (digitsOnly.length <= 6) {
+      formatted = '(${digitsOnly.substring(0, 3)}) ${digitsOnly.substring(3)}';
+    } else {
+      formatted = '(${digitsOnly.substring(0, 3)}) ${digitsOnly.substring(3, 6)}-${digitsOnly.substring(6)}';
+    }
+    
+    return newValue.copyWith(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -37,8 +63,9 @@ class _LoginPageState extends State<LoginPage> {
 
   void _onPhoneChanged() {
     final value = _phoneController.text.trim();
-    final phonePattern = RegExp(r'^[2-9][0-9]{9}');
-    final isValid = phonePattern.hasMatch(value);
+    final digitsOnly = value.replaceAll(RegExp(r'[^\d]'), '');
+    final phonePattern = RegExp(r'^[2-9][0-9]{9}$');
+    final isValid = phonePattern.hasMatch(digitsOnly);
     if (isValid != _isPhoneValid) {
       setState(() {
         _isPhoneValid = isValid;
@@ -60,8 +87,9 @@ class _LoginPageState extends State<LoginPage> {
     if (value == null || value.isEmpty) {
       return 'Please enter your phone number';
     }
-    final phonePattern = RegExp(r'^[2-9][0-9]{9}');
-    if (!phonePattern.hasMatch(value.trim())) {
+    final digitsOnly = value.replaceAll(RegExp(r'[^\d]'), '');
+    final phonePattern = RegExp(r'^[2-9][0-9]{9}$');
+    if (!phonePattern.hasMatch(digitsOnly)) {
       return 'Enter a valid 10-digit US phone number';
     }
     return null;
@@ -84,8 +112,9 @@ class _LoginPageState extends State<LoginPage> {
       _error = null;
     });
     try {
+      final digitsOnly = _phoneController.text.replaceAll(RegExp(r'[^\d]'), '');
       await FirebaseAuth.instance.verifyPhoneNumber(
-        phoneNumber: '+1${_phoneController.text.trim()}',
+        phoneNumber: '+1$digitsOnly',
         verificationCompleted: (PhoneAuthCredential credential) async {
           await FirebaseAuth.instance.signInWithCredential(credential);
         },
@@ -147,11 +176,15 @@ class _LoginPageState extends State<LoginPage> {
       final user = userCredential.user;
       final isNewUser = userCredential.additionalUserInfo?.isNewUser == true;
       if (user != null && isNewUser) {
-        // Save user credentials to Firestore
+        // Save user credentials to Firestore with standardized schema
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'phone': user.phoneNumber,
+          'phoneNumber': user.phoneNumber,
           'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
           'onboardingComplete': false,
+          'eventsAttended': 0,
+          'friends': [],
+          'friendRequests': [],
         });
       }
       // Check onboarding status
@@ -193,184 +226,361 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Login or Sign Up',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              // if (_error != null)
-              //   ShadAlert.destructive(
-              //     title: const Text('Error'),
-              //     description: Text(_error!),
-              //   ),
-              if (!_otpSent) ...[
-                Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Container(
-                            height: 48,
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.surfaceVariant,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Text(
-                              '+1',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ShadInputFormField(
-                              controller: _phoneController,
-                              keyboardType: TextInputType.phone,
-                              validator: _validatePhone,
-                              maxLength: 10,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              onChanged: (value) {
-                                if (value.length > 10) {
-                                  _phoneController.text = value.substring(
-                                    0,
-                                    10,
-                                  );
-                                  _phoneController.selection =
-                                      TextSelection.fromPosition(
-                                        TextPosition(offset: 10),
-                                      );
-                                }
-                              },
-                            ),
-                          ),
-                        ],
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              children: [
+                const SizedBox(height: 80),
+                
+                // App logo
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[600]!, Colors.purple[600]!],
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withValues(alpha: 0.3),
+                        blurRadius: 20,
+                        spreadRadius: 0,
+                        offset: const Offset(0, 8),
                       ),
-                      const SizedBox(height: 4),
-                      const Center(
-                        child: Text(
-                          'Currently available in the US. By signing up, you agree to receive text messsages from us or event hosts.',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.directions_run,
+                    size: 40,
+                    color: Colors.white,
+                  ),
+                ),
+                
+                const SizedBox(height: 48),
+                
+                // Title
+                Text(
+                  _otpSent ? 'Enter Verification Code' : 'Join the Movement',
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                
+                const SizedBox(height: 12),
+                
+                Text(
+                  _otpSent 
+                      ? 'We sent a 6-digit code to +1 ${_phoneController.text}'
+                      : 'Connect with runners and cyclists in your area',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                
+                const SizedBox(height: 40),
+                
+                if (!_otpSent) ...[
+                  // Phone Number Input
+                  Form(
+                    key: _formKey,
+                    child: Column(
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: _isPhoneValid 
+                                  ? Colors.blue[600]!
+                                  : Colors.grey[300]!,
+                              width: _isPhoneValid ? 2 : 1,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            color: Colors.grey[50],
+                          ),
+                          child: Row(
+                            children: [
+                              // Country Code
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 16,
+                                ),
+                                child: Text(
+                                  '+1',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey[700],
+                                  ),
+                                ),
+                              ),
+                              
+                              // Divider
+                              Container(
+                                height: 24,
+                                width: 1,
+                                color: Colors.grey[300],
+                              ),
+                              
+                              // Phone Input
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _phoneController,
+                                  keyboardType: TextInputType.phone,
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                  decoration: InputDecoration(
+                                    hintText: '(555) 123-4567',
+                                    hintStyle: TextStyle(color: Colors.grey[500]),
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 16,
+                                    ),
+                                    counterText: '',
+                                  ),
+                                  inputFormatters: [
+                                    _PhoneNumberFormatter(),
+                                  ],
+                                  validator: _validatePhone,
+                                ),
+                              ),
+                              
+                              // Status indicator
+                              if (_isPhoneValid)
+                                Container(
+                                  padding: const EdgeInsets.only(right: 16),
+                                  child: Container(
+                                    width: 20,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      color: Colors.green[500],
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.check,
+                                      color: Colors.white,
+                                      size: 14,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Disclaimer
+                        Text(
+                          'By continuing, you agree to receive SMS messages. Standard rates may apply.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
                           textAlign: TextAlign.center,
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: 160,
-                  height: 48,
-                  child: ShadButton(
-                    onPressed: _isLoading || !_isPhoneValid
-                        ? null
-                        : _verifyPhone,
-                    enabled: _isPhoneValid && !_isLoading,
-                    child: _isLoading
-                        ? Container(
-                            width: 90,
-                            height: 24,
-                            alignment: Alignment.center,
-                            color: Colors.transparent,
-                            child: const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : const Text('Send OTP'),
-                  ),
-                ),
-                if (_error != null && !_otpSent)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      'We hit a snag. Try again in a bit, or ping us if you need help.',
-                      style: const TextStyle(color: Colors.red, fontSize: 13),
-                      textAlign: TextAlign.center,
+                      ],
                     ),
                   ),
-              ] else ...[
-                Form(
-                  key: _otpFormKey,
-                  child: ShadInputOTPFormField(
-                    id: 'otp',
-                    maxLength: 6,
-                    keyboardType: TextInputType.number,
-                    validator: _validateOTP,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    onChanged: (value) {
-                      _otpController.text = value;
-                      setState(() {
-                        _otpValue = value;
-                      });
-                    },
-                    children: const [
-                      ShadInputOTPGroup(
-                        children: [
-                          ShadInputOTPSlot(),
-                          ShadInputOTPSlot(),
-                          ShadInputOTPSlot(),
-                          ShadInputOTPSlot(),
-                          ShadInputOTPSlot(),
-                          ShadInputOTPSlot(),
-                        ],
+                  
+                  const SizedBox(height: 32),
+                  
+                  // Send OTP Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: _isLoading || !_isPhoneValid ? null : _verifyPhone,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isPhoneValid 
+                            ? Colors.black
+                            : Colors.grey[400],
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: 160,
-                  height: 48,
-                  child: ShadButton(
-                    onPressed:
-                        _isLoading ||
-                            !RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue)
-                        ? null
-                        : _signInWithOTP,
-                    enabled:
-                        !_isLoading &&
-                        RegExp(r'^\d{6}\u0000?$').hasMatch(_otpValue),
-                    child: _isLoading
-                        ? Container(
-                            width: 90,
-                            height: 24,
-                            alignment: Alignment.center,
-                            color: Colors.transparent,
-                            child: const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                      child: _isLoading
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text(
+                              'Send Code',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          )
-                        : const Text('Verify OTP'),
-                  ),
-                ),
-                if (_otpError != null && _otpSent)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      _otpError!,
-                      style: const TextStyle(color: Colors.red, fontSize: 13),
-                      textAlign: TextAlign.center,
                     ),
                   ),
+                  
+                  if (_error != null && !_otpSent)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16.0),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red[200]!),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.error_outline, color: Colors.red[600], size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'We hit a snag. Try again in a bit, or ping us if you need help.',
+                                style: TextStyle(
+                                  color: Colors.red[700],
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    
+                ] else ...[
+                  // OTP Input
+                  Form(
+                    key: _otpFormKey,
+                    child: Column(
+                      children: [
+                        ShadInputOTPFormField(
+                          id: 'otp',
+                          maxLength: 6,
+                          keyboardType: TextInputType.number,
+                          validator: _validateOTP,
+                          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                          onChanged: (value) {
+                            _otpController.text = value;
+                            setState(() {
+                              _otpValue = value;
+                            });
+                          },
+                          children: const [
+                            ShadInputOTPGroup(
+                              children: [
+                                ShadInputOTPSlot(),
+                                ShadInputOTPSlot(),
+                                ShadInputOTPSlot(),
+                                ShadInputOTPSlot(),
+                                ShadInputOTPSlot(),
+                                ShadInputOTPSlot(),
+                              ],
+                            ),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // Resend Code
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _otpSent = false;
+                              _otpError = null;
+                              _otpValue = '';
+                              _otpController.clear();
+                            });
+                          },
+                          child: Text(
+                            'Didn\'t receive a code? Resend',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.blue[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 32),
+                  
+                  // Verify Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: _isLoading || _otpValue.length != 6
+                          ? null
+                          : _signInWithOTP,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _otpValue.length == 6 
+                            ? Colors.black
+                            : Colors.grey[400],
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: _isLoading
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text(
+                              'Verify & Continue',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                    ),
+                  ),
+                  
+                  if (_otpError != null && _otpSent)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16.0),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red[200]!),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.error_outline, color: Colors.red[600], size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _otpError!,
+                                style: TextStyle(
+                                  color: Colors.red[700],
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+                
+                const SizedBox(height: 40),
               ],
-            ],
+            ),
           ),
         ),
       ),

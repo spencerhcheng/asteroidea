@@ -3,8 +3,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login.dart';
 import 'main_navigation.dart';
+import 'onboarding_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,11 +33,9 @@ class MyApp extends StatelessWidget {
             colorScheme: ColorScheme.light(
               primary: Colors.blueGrey[900]!,
               secondary: Colors.blueAccent,
-              background: Colors.white,
-              surface: Colors.grey[100]!,
+              surface: Colors.white,
               onPrimary: Colors.white,
               onSecondary: Colors.white,
-              onBackground: Colors.black,
               onSurface: Colors.black,
             ),
             fontFamily: 'Helvetica Neue',
@@ -81,7 +81,7 @@ class MyApp extends StatelessWidget {
           },
           initialRoute: '/',
           routes: {
-            '/': (context) => const LandingPage(),
+            '/': (context) => const AuthWrapper(),
             '/login': (context) => const LoginPage(),
             '/main': (context) => const MainNavigation(),
           },
@@ -97,54 +97,236 @@ class LandingPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       body: SafeArea(
-        child: Stack(
-          children: [
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Placeholder logo
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primary.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Center(child: Icon(Icons.star, size: 64)),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Welcome to Asteroidea',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 32,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: ShadButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => const LoginPage(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          child: Column(
+            children: [
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // App Logo/Icon
+                    Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.blue[600]!, Colors.purple[600]!],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.blue.withValues(alpha: 0.3),
+                            blurRadius: 30,
+                            spreadRadius: 0,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
                       ),
-                    );
-                  },
-                  child: const Text('Get Started'),
+                      child: const Icon(
+                        Icons.directions_run,
+                        size: 60,
+                        color: Colors.white,
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 48),
+                    
+                    // App Name
+                    const Text(
+                      'Asteroidea',
+                      style: TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 12),
+                    
+                    // Tagline
+                    Text(
+                      'Find your running & cycling community',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    
+                    const SizedBox(height: 8),
+                    
+                    Text(
+                      'Join local events, meet new people, stay active',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey[500],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ],
+              
+              // Bottom section with button
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const LoginPage(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        'Get Started',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  Text(
+                    'No spam, just great workout partners',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[500],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  Future<void> _createMissingUserDocument(User user) async {
+    try {
+      print('DEBUG: Creating missing user document for ${user.uid}');
+      print('DEBUG: User phone: ${user.phoneNumber}');
+      
+      // Create user document if it doesn't exist
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'phoneNumber': user.phoneNumber,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'onboardingComplete': false,
+        'eventsAttended': 0,
+        'friends': [],
+        'friendRequests': [],
+      });
+      
+      print('DEBUG: User document created successfully');
+    } catch (e) {
+      print('Error creating user document: $e');
+      // If document creation fails, we'll still proceed to onboarding
+      // The onboarding flow should handle document creation as well
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        final user = snapshot.data;
+        if (user == null) {
+          print('DEBUG: No authenticated user found');
+          return const LandingPage();
+        }
+
+        print('DEBUG: Authenticated user found: ${user.uid}');
+        print('DEBUG: User phone: ${user.phoneNumber}');
+        
+        // User is authenticated, check onboarding status
+        return FutureBuilder<DocumentSnapshot>(
+          future: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get(),
+          builder: (context, userSnapshot) {
+            if (userSnapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(
+                backgroundColor: Colors.white,
+                body: Center(
+                  child: CircularProgressIndicator(),
+                ),
+              );
+            }
+
+            if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+              print('DEBUG: User document does not exist, creating it');
+              // User document doesn't exist, create it and go to onboarding
+              return FutureBuilder<void>(
+                future: _createMissingUserDocument(user),
+                builder: (context, createSnapshot) {
+                  if (createSnapshot.connectionState == ConnectionState.waiting) {
+                    return const Scaffold(
+                      backgroundColor: Colors.white,
+                      body: Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  }
+                  return const OnboardingPage();
+                },
+              );
+            }
+
+            final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
+            final onboardingComplete = userData?['onboardingComplete'] == true;
+
+            print('DEBUG: User document exists, onboarding complete: $onboardingComplete');
+
+            if (!onboardingComplete) {
+              print('DEBUG: Onboarding not complete, going to onboarding page');
+              return const OnboardingPage();
+            }
+
+            print('DEBUG: Onboarding complete, going to main navigation');
+            return const MainNavigation();
+          },
+        );
+      },
     );
   }
 }
