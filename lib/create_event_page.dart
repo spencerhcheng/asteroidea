@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
+import 'event_detail_page.dart';
 
 extension StringExtension on String {
   String capitalize() {
@@ -12,7 +13,20 @@ extension StringExtension on String {
 
 class CreateEventPage extends StatefulWidget {
   final bool isModal;
-  const CreateEventPage({super.key, this.isModal = false});
+  final bool isEdit;
+  final String? eventId;
+  final Map<String, dynamic>? initialEventData;
+  final String? initialEventType;
+  
+  const CreateEventPage({
+    super.key, 
+    this.isModal = false,
+    this.isEdit = false,
+    this.eventId,
+    this.initialEventData,
+    this.initialEventType,
+  });
+  
   @override
   State<CreateEventPage> createState() => CreateEventPageState();
 }
@@ -46,7 +60,59 @@ class CreateEventPageState extends State<CreateEventPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.isEdit && widget.initialEventData != null) {
+      _populateFormFromEventData(widget.initialEventData!);
+    } else if (widget.initialEventType != null) {
+      // Set initial event type from modal selection
+      _eventType = widget.initialEventType!;
+    }
     _saveInitialValues();
+  }
+
+  void _populateFormFromEventData(Map<String, dynamic> eventData) {
+    setState(() {
+      _eventType = eventData['eventType'] ?? 'run';
+      _isPublic = eventData['isPublic'] ?? true;
+      _womenOnly = eventData['womenOnly'] ?? false;
+      _eventName = eventData['eventName'] ?? '';
+      _description = eventData['description'] ?? '';
+      _address = eventData['address'] ?? '';
+      _distance = eventData['distance']?.toDouble();
+      _pace = eventData['pace'] ?? 'social';
+      _groupSize = eventData['groupSize'];
+      
+      // Handle date conversion - standardized to Timestamp
+      if (eventData['date'] != null) {
+        if (eventData['date'] is Timestamp) {
+          _date = (eventData['date'] as Timestamp).toDate();
+        } else if (eventData['date'] is int) {
+          // Legacy support for milliseconds
+          _date = DateTime.fromMillisecondsSinceEpoch(eventData['date']);
+        } else if (eventData['date'] is String) {
+          _date = DateTime.tryParse(eventData['date']);
+        }
+      }
+      
+      // Handle time conversion
+      if (eventData['startTime'] != null && eventData['startTime'].isNotEmpty) {
+        final timeParts = eventData['startTime'].split(':');
+        if (timeParts.length >= 2) {
+          final hour = int.tryParse(timeParts[0]);
+          final minute = int.tryParse(timeParts[1]);
+          if (hour != null && minute != null) {
+            _startTime = TimeOfDay(hour: hour, minute: minute);
+          }
+        }
+      }
+      
+      // Handle type field
+      final typeValue = eventData['type'] ?? '';
+      if (_eventType == 'run' && _runTypes.contains(typeValue)) {
+        _runType = typeValue;
+      } else if (_eventType == 'ride' && _rideTypes.contains(typeValue)) {
+        _rideType = typeValue;
+      }
+    });
   }
 
   void _saveInitialValues() {
@@ -132,10 +198,32 @@ class CreateEventPageState extends State<CreateEventPage> {
     }
   }
 
+  void _showSnackBar(SnackBar snackBar) {
+    if (!mounted) return;
+    // Clear any existing snackbars before showing the new one
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+  }
+
   Future<void> _saveEvent() async {
     setState(() => _showValidation = true);
 
     if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    // Validate date and time are selected
+    if (_date == null) {
+      _showSnackBar(
+        const SnackBar(content: Text('Please select a date')),
+      );
+      return;
+    }
+
+    if (_startTime == null) {
+      _showSnackBar(
+        const SnackBar(content: Text('Please select a start time')),
+      );
       return;
     }
 
@@ -145,31 +233,210 @@ class CreateEventPageState extends State<CreateEventPage> {
       if (_eventType == 'run' && typeValue != 'road' && typeValue != 'trail') {
         typeValue = 'road';
       }
-      final event = {
+      
+      // Get creator name from user profile
+      String creatorName = 'Unknown';
+      try {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (userDoc.exists) {
+          final userData = userDoc.data()!;
+          final firstName = userData['firstName'] ?? '';
+          final lastName = userData['lastName'] ?? '';
+          
+          if (firstName.isNotEmpty && lastName.isNotEmpty) {
+            creatorName = '$firstName $lastName';
+          } else if (firstName.isNotEmpty) {
+            creatorName = firstName;
+          } else if (lastName.isNotEmpty) {
+            creatorName = lastName;
+          }
+        }
+      } catch (e) {
+        print('Error fetching creator name: $e');
+      }
+      
+      // Create standardized event data with Timestamp
+      final eventData = <String, dynamic>{
         'eventType': _eventType,
-        'creatorId': user.uid,
         'eventName': _eventName,
         'description': _description,
-        'date': _date?.millisecondsSinceEpoch,
-        'startTime': _startTime != null
-            ? '${_startTime!.hour}:${_startTime!.minute}'
-            : null,
         'address': _address,
-        'distance': _distance,
         'pace': _pace,
-        'groupSize': _groupSize,
         'isPublic': _isPublic,
         'womenOnly': _womenOnly,
         'type': typeValue,
-        'createdAt': FieldValue.serverTimestamp(),
       };
-      await FirebaseFirestore.instance.collection('events').add(event);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Event created!')));
-      resetForm();
+      
+      // Add date as Timestamp if set
+      if (_date != null) {
+        eventData['date'] = Timestamp.fromDate(_date!);
+      }
+      
+      // Add start time if set
+      if (_startTime != null) {
+        eventData['startTime'] = '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}';
+      }
+      
+      // Add optional numeric fields
+      if (_distance != null) {
+        eventData['distance'] = _distance;
+        eventData['distanceUnit'] = _distanceUnit;
+      }
+      
+      if (_groupSize != null) {
+        eventData['groupSize'] = _groupSize;
+      }
+      
+      if (widget.isEdit && widget.eventId != null) {
+        // Update existing event - include updated creator name and photo in case they changed
+        eventData['updatedAt'] = FieldValue.serverTimestamp();
+        eventData['creatorName'] = creatorName;
+        
+        // Also update creator photo URL
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        final userData = userDoc.data() ?? {};
+        eventData['creatorPhotoUrl'] = userData['photoUrl'];
+        
+        // Ensure organizer is still a participant (in case they were removed)
+        final eventDoc = await FirebaseFirestore.instance
+            .collection('events')
+            .doc(widget.eventId!)
+            .get();
+        
+        if (eventDoc.exists) {
+          final currentData = eventDoc.data()!;
+          final participants = List<String>.from(currentData['participants'] ?? []);
+          final participantsData = List<Map<String, dynamic>>.from(currentData['participantsData'] ?? []);
+          
+          // Check if organizer is in participants list
+          if (!participants.contains(user.uid)) {
+            // Get user data to add organizer back
+            final userDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(user.uid)
+                .get();
+            
+            final userData = userDoc.data() ?? {};
+            final firstName = userData['firstName'] ?? '';
+            final lastName = userData['lastName'] ?? '';
+            final fullName = '$firstName $lastName'.trim();
+            final photoUrl = userData['photoUrl'];
+            
+            // Add organizer as first participant
+            participants.insert(0, user.uid);
+            participantsData.insert(0, {
+              'uid': user.uid,
+              'name': fullName.isNotEmpty ? fullName : 'User',
+              'firstName': firstName,
+              'lastName': lastName,
+              'photoUrl': photoUrl,
+            });
+            
+            eventData['participants'] = participants;
+            eventData['participantsData'] = participantsData;
+          }
+        }
+        
+        await FirebaseFirestore.instance
+            .collection('events')
+            .doc(widget.eventId)
+            .update(eventData);
+        
+        if (!mounted) return;
+        _showSnackBar(
+          const SnackBar(content: Text('Event updated successfully!')),
+        );
+      } else {
+        // Create new event - add creator as first participant
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        final userData = userDoc.data() ?? {};
+        final firstName = userData['firstName'] ?? '';
+        final lastName = userData['lastName'] ?? '';
+        final fullName = '$firstName $lastName'.trim();
+        final photoUrl = userData['photoUrl'];
+        
+        eventData['creatorId'] = user.uid;
+        eventData['creatorName'] = creatorName;
+        eventData['creatorPhotoUrl'] = photoUrl;
+        eventData['createdAt'] = FieldValue.serverTimestamp();
+        // Add creator as first participant
+        eventData['participants'] = [user.uid];
+        eventData['participantsData'] = [{
+          'uid': user.uid,
+          'name': fullName.isNotEmpty ? fullName : 'User',
+          'firstName': firstName,
+          'lastName': lastName,
+          'photoUrl': photoUrl,
+        }];
+        
+        final docRef = await FirebaseFirestore.instance.collection('events').add(eventData);
+        
+        if (!mounted) return;
+        
+        // Navigate to event detail page instead of showing snackbar and going back
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => EventDetailPage(
+              eventId: docRef.id,
+              eventData: eventData,
+            ),
+          ),
+        );
+        return;
+      }
+      
       if (!mounted) return;
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _deleteEvent() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Event'),
+        content: Text(
+          'Are you sure you want to delete "${_eventName.isNotEmpty ? _eventName : 'this event'}"?\n\nThis action cannot be undone and any users signed up will be affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && widget.eventId != null) {
+      try {
+        await FirebaseFirestore.instance.collection('events').doc(widget.eventId).delete();
+        if (!mounted) return;
+        _showSnackBar(
+          const SnackBar(content: Text('Event deleted successfully')),
+        );
+        Navigator.of(context).pop(); // Close the edit page
+      } catch (e) {
+        if (!mounted) return;
+        _showSnackBar(
+          const SnackBar(content: Text('Failed to delete event')),
+        );
+      }
     }
   }
 
@@ -180,7 +447,7 @@ class CreateEventPageState extends State<CreateEventPage> {
       child: Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          title: const Text('Create Event'),
+          title: Text(widget.isEdit ? 'Edit Event' : 'Create Event'),
           backgroundColor: Colors.white,
           elevation: 0,
           actions: widget.isModal
@@ -338,6 +605,7 @@ class CreateEventPageState extends State<CreateEventPage> {
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
+                  initialValue: _eventName,
                   decoration: const InputDecoration(labelText: 'Event Name *'),
                   validator: (v) => v == null || v.trim().isEmpty
                       ? 'Event name is required'
@@ -348,64 +616,17 @@ class CreateEventPageState extends State<CreateEventPage> {
                   },
                 ),
                 const SizedBox(height: 16),
-                // Expandable Description Field
-                ExpansionTile(
-                  onExpansionChanged: (expanded) {
-                    setState(() {
-                      _isDescriptionExpanded = expanded;
-                    });
-                  },
-                  initiallyExpanded: _isDescriptionExpanded,
-                  title: Text(
-                    _description.isEmpty ? 'Add Description' : 'Description',
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontWeight: _description.isEmpty
-                          ? FontWeight.normal
-                          : FontWeight.bold,
-                    ),
+                TextFormField(
+                  decoration: const InputDecoration(
+                    labelText: 'Description',
+                    alignLabelWithHint: true,
                   ),
-                  children: _isDescriptionExpanded
-                      ? [
-                          Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                TextFormField(
-                                  decoration: const InputDecoration(
-                                    labelText: 'Description',
-                                    alignLabelWithHint: true,
-                                  ),
-                                  maxLines: null,
-                                  textInputAction: TextInputAction.done,
-                                  initialValue: _description,
-                                  onChanged: (v) {
-                                    _description = v;
-                                    _onEdit();
-                                  },
-                                  onEditingComplete: () {
-                                    FocusScope.of(context).unfocus();
-                                    setState(
-                                      () => _isDescriptionExpanded = false,
-                                    );
-                                  },
-                                ),
-                                const SizedBox(height: 12),
-                                ShadButton(
-                                  onPressed: () {
-                                    FocusScope.of(context).unfocus();
-                                    setState(() {
-                                      _isDescriptionExpanded = false;
-                                    });
-                                  },
-                                  child: const Text('Done'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ]
-                      : [],
+                  maxLines: null,
+                  initialValue: _description,
+                  onChanged: (v) {
+                    _description = v;
+                    _onEdit();
+                  },
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -418,12 +639,14 @@ class CreateEventPageState extends State<CreateEventPage> {
                         ),
                         label: Text(
                           _date == null
-                              ? 'Pick Date'
+                              ? 'Pick Date *'
                               : '${_date!.month}/${_date!.day}/${_date!.year}',
                           style: const TextStyle(color: Colors.white),
                         ),
                         style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.black,
+                          backgroundColor: (_showValidation && _date == null) 
+                              ? Colors.red[600] 
+                              : Colors.black,
                           foregroundColor: Colors.white,
                           side: BorderSide.none,
                           shape: RoundedRectangleBorder(
@@ -454,12 +677,14 @@ class CreateEventPageState extends State<CreateEventPage> {
                         ),
                         label: Text(
                           _startTime == null
-                              ? 'Start Time'
+                              ? 'Start Time *'
                               : _startTime!.format(context),
                           style: const TextStyle(color: Colors.white),
                         ),
                         style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.black,
+                          backgroundColor: (_showValidation && _startTime == null) 
+                              ? Colors.red[600] 
+                              : Colors.black,
                           foregroundColor: Colors.white,
                           side: BorderSide.none,
                           shape: RoundedRectangleBorder(
@@ -488,6 +713,7 @@ class CreateEventPageState extends State<CreateEventPage> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextFormField(
+                        initialValue: _address,
                         decoration: const InputDecoration(
                           labelText: 'Meeting location *',
                         ),
@@ -505,6 +731,7 @@ class CreateEventPageState extends State<CreateEventPage> {
                 const SizedBox(height: 16),
                 if (_eventType == 'run' || _eventType == 'ride') ...[
                   TextFormField(
+                    initialValue: _distance?.toString() ?? '',
                     decoration: const InputDecoration(
                       labelText: 'Distance *',
                       hintText: 'Enter approximate distance in miles',
@@ -554,8 +781,9 @@ class CreateEventPageState extends State<CreateEventPage> {
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
+                  initialValue: _groupSize?.toString() ?? '',
                   decoration: const InputDecoration(
-                    labelText: 'Group Size Limit',
+                    labelText: 'Group Size Limit (leave empty for no limit)',
                   ),
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -606,14 +834,35 @@ class CreateEventPageState extends State<CreateEventPage> {
                   backgroundColor: const Color(
                     0xFFFFD600,
                   ), // Mustardy orange-yellow
-                  child: const Text(
-                    'Create Event',
-                    style: TextStyle(
+                  child: Text(
+                    widget.isEdit ? 'Update Event' : 'Launch Event',
+                    style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       color: Colors.black,
                     ),
                   ),
                 ),
+                // Delete button - only show when editing
+                if (widget.isEdit) ...[
+                  const SizedBox(height: 16),
+                  ShadButton.outline(
+                    onPressed: _deleteEvent,
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.delete, color: Colors.red, size: 18),
+                        SizedBox(width: 8),
+                        Text(
+                          'Delete Event',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

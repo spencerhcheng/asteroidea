@@ -5,32 +5,620 @@ import 'package:flutter/services.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:path/path.dart' as path;
+import 'package:shadcn_ui/shadcn_ui.dart';
+import 'share_code_page.dart';
+import 'login.dart';
 
-class ProfilePage extends StatelessWidget {
+class _PhoneNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digitsOnly = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+    
+    // Limit to 10 digits
+    if (digitsOnly.length > 10) {
+      return oldValue;
+    }
+    
+    String formatted;
+    if (digitsOnly.length <= 3) {
+      formatted = digitsOnly;
+    } else if (digitsOnly.length <= 6) {
+      formatted = '(${digitsOnly.substring(0, 3)}) ${digitsOnly.substring(3)}';
+    } else {
+      formatted = '(${digitsOnly.substring(0, 3)}) ${digitsOnly.substring(3, 6)}-${digitsOnly.substring(6)}';
+    }
+    
+    return newValue.copyWith(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  int _refreshKey = 0;
+  
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  void _showSnackBar(String message, {Color? backgroundColor}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor ?? Colors.green,
+      ),
+    );
+  }
+
+  Future<File?> _compressImage(File imageFile) async {
+    try {
+      final dir = Directory.systemTemp;
+      final fileName = path.basename(imageFile.path);
+      final targetPath = '${dir.path}/compressed_$fileName';
+
+      final compressedFile = await FlutterImageCompress.compressAndGetFile(
+        imageFile.absolute.path,
+        targetPath,
+        quality: 85,
+        minWidth: 400,
+        minHeight: 400,
+        format: CompressFormat.jpeg,
+      );
+
+      if (compressedFile != null) {
+        print('Original size: ${await imageFile.length()} bytes');
+        print('Compressed size: ${await compressedFile.length()} bytes');
+        return File(compressedFile.path);
+      }
+      return null;
+    } catch (e) {
+      print('Error compressing image: $e');
+      return null;
+    }
+  }
 
   Future<void> _updateProfilePhoto(File? newPhoto) async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      print('Error: No user signed in');
+      return;
+    }
 
     try {
+      print('Starting photo upload for user: ${user.uid}');
       String? photoUrl;
       if (newPhoto != null) {
+        print('Original photo: ${newPhoto.path}');
+        
+        // Compress the image before uploading
+        final compressedPhoto = await _compressImage(newPhoto);
+        if (compressedPhoto == null) {
+          throw Exception('Failed to compress image');
+        }
+        
+        print('Uploading compressed photo: ${compressedPhoto.path}');
         final ref = FirebaseStorage.instance
             .ref()
             .child('profile_photos')
             .child('${user.uid}.jpg');
 
-        await ref.putFile(newPhoto);
-        photoUrl = await ref.getDownloadURL();
+        print('Firebase Storage reference: ${ref.fullPath}');
+        final uploadTask = await ref.putFile(compressedPhoto);
+        print('Upload completed with state: ${uploadTask.state}');
+        
+        photoUrl = await uploadTask.ref.getDownloadURL();
+        print('Download URL obtained: $photoUrl');
+        
+        // Clean up temporary compressed file
+        try {
+          await compressedPhoto.delete();
+        } catch (e) {
+          print('Failed to delete temporary file: $e');
+        }
       }
 
+      print('Updating Firestore with photoUrl: $photoUrl');
       await FirebaseFirestore.instance.collection('users').doc(user.uid).update(
         {'photoUrl': photoUrl, 'photoSkipped': photoUrl == null},
       );
+      
+      print('Profile photo updated successfully');
+      setState(() {
+        _refreshKey++;
+      });
+      
+      if (mounted) {
+        _showSnackBar('Profile photo updated successfully');
+      }
     } catch (e) {
       print('Error updating profile photo: $e');
+      if (mounted) {
+        _showSnackBar('Failed to update profile photo: ${e.toString()}', backgroundColor: Colors.red);
+      }
     }
+  }
+
+  void _showPhotoOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 20,
+              spreadRadius: 0,
+              offset: Offset(0, -8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Add Photo',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[400]!, Colors.purple[400]!],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                ),
+                title: const Text(
+                  'Take Photo',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final picked = await ImagePicker().pickImage(
+                    source: ImageSource.camera,
+                    maxWidth: 1000,
+                    maxHeight: 1000,
+                    imageQuality: 85,
+                  );
+                  if (picked != null) {
+                    await _updateProfilePhoto(File(picked.path));
+                  }
+                },
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.purple[400]!, Colors.pink[400]!],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.photo_library, color: Colors.white, size: 20),
+                ),
+                title: const Text(
+                  'Choose from Gallery',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final picked = await ImagePicker().pickImage(
+                    source: ImageSource.gallery,
+                    maxWidth: 1000,
+                    maxHeight: 1000,
+                    imageQuality: 85,
+                  );
+                  if (picked != null) {
+                    await _updateProfilePhoto(File(picked.path));
+                  }
+                },
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFriendsList(Map<String, dynamic>? userData) {
+    final friends = userData?['friends'] as List<dynamic>? ?? [];
+    final friendRequests = userData?['friendRequests'] as List<dynamic>? ?? [];
+    
+    print('DEBUG: Building friends list - Friends: ${friends.length}, Friend Requests: ${friendRequests.length}');
+    if (friendRequests.isNotEmpty) {
+      print('DEBUG: Friend requests: $friendRequests');
+    }
+    
+    if (friends.isEmpty && friendRequests.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        child: Text(
+          'No friends yet. Add some friends to get started!',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 14,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Friend Requests
+        if (friendRequests.isNotEmpty) ...[
+          Text(
+            'Friend Requests (${friendRequests.length})',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...friendRequests.map((request) => _buildFriendRequestItem(request)),
+          const SizedBox(height: 16),
+        ],
+        
+        // Friends List
+        if (friends.isNotEmpty) ...[
+          Text(
+            'Friends (${friends.length})',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...friends.map((friend) => _buildFriendItem(friend)),
+        ],
+      ],
+    );
+  }
+  
+  Widget _buildFriendItem(Map<String, dynamic> friend) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: Colors.grey[300],
+            backgroundImage: friend['photoUrl'] != null && friend['photoUrl'].isNotEmpty
+                ? NetworkImage(friend['photoUrl'])
+                : null,
+            child: friend['photoUrl'] == null || friend['photoUrl'].isEmpty
+                ? Icon(Icons.person, size: 20, color: Colors.grey[600])
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  friend['name'] ?? 'Unknown User',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+                if (friend['phoneNumber'] != null)
+                  Text(
+                    friend['phoneNumber'],
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildFriendRequestItem(Map<String, dynamic> request) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue[200]!),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: Colors.grey[300],
+            backgroundImage: request['photoUrl'] != null && request['photoUrl'].isNotEmpty
+                ? NetworkImage(request['photoUrl'])
+                : null,
+            child: request['photoUrl'] == null || request['photoUrl'].isEmpty
+                ? Icon(Icons.person, size: 20, color: Colors.grey[600])
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  request['name'] ?? 'Unknown User',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+                if (request['phoneNumber'] != null)
+                  Text(
+                    request['phoneNumber'],
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ShadButton(
+                onPressed: () => _acceptFriendRequest(request),
+                backgroundColor: Colors.green[600],
+                child: const Text(
+                  'Accept',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ShadButton.outline(
+                onPressed: () => _declineFriendRequest(request),
+                child: Text(
+                  'Decline',
+                  style: TextStyle(
+                    color: Colors.red[600],
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Future<void> _acceptFriendRequest(Map<String, dynamic> request) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      print('ERROR: No authenticated user found for accepting friend request');
+      return;
+    }
+
+    print('DEBUG: Accepting friend request from ${request['uid']}');
+
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      
+      // Get current user data with error checking
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      
+      if (!currentUserDoc.exists) {
+        throw Exception('Current user document does not exist');
+      }
+      
+      final currentUserData = currentUserDoc.data() ?? {};
+      print('DEBUG: Current user data keys: ${currentUserData.keys.toList()}');
+      
+      // Get phone numbers
+      final currentUserPhone = currentUserData['phoneNumber']?.toString();
+      final requestPhone = request['phoneNumber']?.toString();
+      
+      // Create friend objects with standardized schema
+      final newFriend = <String, dynamic>{
+        'uid': request['uid'],
+        'name': request['name'] ?? 'Unknown User',
+        'addedAt': Timestamp.now(),
+      };
+      
+      // Add optional fields if present
+      if (requestPhone?.isNotEmpty == true) {
+        newFriend['phoneNumber'] = requestPhone;
+        print('DEBUG: Added phone to new friend: $requestPhone');
+      }
+      
+      final requestPhotoUrl = request['photoUrl']?.toString();
+      if (requestPhotoUrl?.isNotEmpty == true) {
+        newFriend['photoUrl'] = requestPhotoUrl;
+        print('DEBUG: Added photo URL to new friend');
+      }
+      
+      final currentUserAsFriend = <String, dynamic>{
+        'uid': user.uid,
+        'name': '${currentUserData['firstName'] ?? ''} ${currentUserData['lastName'] ?? ''}'.trim(),
+        'addedAt': Timestamp.now(),
+      };
+      
+      // Add optional fields if present
+      if (currentUserPhone?.isNotEmpty == true) {
+        currentUserAsFriend['phoneNumber'] = currentUserPhone;
+        print('DEBUG: Added phone to current user friend object: $currentUserPhone');
+      }
+      
+      final currentPhotoUrl = currentUserData['photoUrl']?.toString();
+      if (currentPhotoUrl?.isNotEmpty == true) {
+        currentUserAsFriend['photoUrl'] = currentPhotoUrl;
+        print('DEBUG: Added photo URL to current user friend object');
+      }
+      
+      print('DEBUG: New friend object: $newFriend');
+      print('DEBUG: Current user as friend object: $currentUserAsFriend');
+      
+      // Verify the requester user still exists
+      final requesterDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(request['uid'])
+          .get();
+          
+      if (!requesterDoc.exists) {
+        throw Exception('Requester user document no longer exists');
+      }
+      
+      // Add friend to current user and remove request
+      batch.set(FirebaseFirestore.instance.collection('users').doc(user.uid), {
+        'friends': FieldValue.arrayUnion([newFriend]),
+        'friendRequests': FieldValue.arrayRemove([request]),
+      }, SetOptions(merge: true));
+      
+      // Add current user as friend to the requester
+      batch.set(FirebaseFirestore.instance.collection('users').doc(request['uid']), {
+        'friends': FieldValue.arrayUnion([currentUserAsFriend]),
+      }, SetOptions(merge: true));
+      
+      print('DEBUG: Committing batch operation');
+      await batch.commit();
+      
+      // Create notification for the person who sent the friend request
+      await FirebaseFirestore.instance.collection('notifications').add({
+        'userId': request['uid'],
+        'type': 'friend_accepted',
+        'title': 'Friend Request Accepted',
+        'message': '${currentUserAsFriend['name']} accepted your friend request',
+        'data': {
+          'fromUserId': user.uid,
+          'fromUserName': currentUserAsFriend['name'],
+          'fromUserPhotoUrl': currentPhotoUrl,
+        },
+        'isRead': false,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      
+      setState(() {
+        _refreshKey++;
+      });
+      
+      print('DEBUG: Friend request accepted successfully');
+      print('DEBUG: Created notification for friend request acceptance');
+      _showSnackBar('Friend request accepted!');
+    } catch (e, stackTrace) {
+      print('ERROR: Failed to accept friend request: $e');
+      print('STACK TRACE: $stackTrace');
+      
+      String errorMessage = 'Failed to accept friend request';
+      if (e.toString().contains('permission-denied')) {
+        errorMessage = 'Permission denied. Unable to accept friend request.';
+      } else if (e.toString().contains('not-found')) {
+        errorMessage = 'User not found. They may have deleted their account.';
+      }
+      
+      _showSnackBar(errorMessage, backgroundColor: Colors.red);
+    }
+  }
+  
+  Future<void> _declineFriendRequest(Map<String, dynamic> request) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({
+        'friendRequests': FieldValue.arrayRemove([request]),
+      }, SetOptions(merge: true));
+      
+      setState(() {
+        _refreshKey++;
+      });
+      
+      _showSnackBar('Friend request declined');
+    } catch (e) {
+      _showSnackBar('Failed to decline friend request', backgroundColor: Colors.red);
+    }
+  }
+  
+  void _showAddFriendModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const AddFriendModal(),
+    );
   }
 
   @override
@@ -44,11 +632,12 @@ class ProfilePage extends StatelessWidget {
         ),
       );
     }
-    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      future: FirebaseFirestore.instance
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      key: ValueKey(_refreshKey),
+      stream: FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
-          .get(),
+          .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -57,231 +646,413 @@ class ProfilePage extends StatelessWidget {
           );
         }
         final data = snapshot.data?.data();
+        print('DEBUG: Profile StreamBuilder received data for user ${user.uid}');
+        print('DEBUG: User data keys: ${data?.keys.toList()}');
+        if (data?['friendRequests'] != null) {
+          print('DEBUG: Friend requests in data: ${data!['friendRequests']}');
+        }
         final firstName = data?['firstName'] ?? 'User';
         final lastName = data?['lastName'] ?? '';
         final bio = data?['bio'] ?? '';
-        final fullName = (firstName + ' ' + lastName).trim();
+        final fullName = '$firstName $lastName'.trim();
         final location = (data?['usingLocation'] ?? false)
             ? 'Current Location'
             : (data?['zipCode'] ?? '');
-        final photoSkipped = data?['photoSkipped'] ?? true;
         final String? photoUrl = data?['photoUrl'];
         return Scaffold(
           backgroundColor: Colors.white,
-          body: SafeArea(
-            child: Stack(
-              fit: StackFit.expand,
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            backgroundColor: Colors.white,
+            elevation: 0,
+            title: const Text(
+              'Profile',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ShadButton.outline(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const ShareCodePage(),
+                      ),
+                    );
+                  },
+                  child: const Icon(Icons.share, size: 18),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: ShadButton(
+                  onPressed: () async {
+                    final result = await showModalBottomSheet<bool>(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => const EditProfileSheet(),
+                    );
+                    
+                    if (result == true) {
+                      setState(() {
+                        _refreshKey++;
+                      });
+                    }
+                  },
+                  child: const Icon(Icons.edit, size: 18),
+                ),
+              ),
+            ],
+          ),
+          body: RefreshIndicator(
+            onRefresh: () async {
+              setState(() {
+                _refreshKey++;
+              });
+              // Small delay to show the refresh indicator
+              await Future.delayed(const Duration(milliseconds: 500));
+            },
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
               children: [
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(32.0, 48.0, 32.0, 32.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            CircleAvatar(
-                              radius: 54,
-                              backgroundColor: Colors.grey[400],
-                              backgroundImage:
-                                  (photoUrl != null && photoUrl.isNotEmpty)
-                                  ? NetworkImage(photoUrl) as ImageProvider
-                                  : null,
-                              child: (photoUrl == null || photoUrl.isEmpty)
-                                  ? const Icon(
-                                      Icons.person,
-                                      size: 54,
-                                      color: Colors.white,
-                                    )
-                                  : null,
-                            ),
-                            Positioned(
-                              bottom: -10,
-                              right: -10,
-                              child: PopupMenuButton<String>(
-                                icon: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white,
-                                      width: 2,
-                                    ),
-                                  ),
-                                  child: const Icon(
-                                    Icons.camera_alt,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
+                // Profile Header Card
+                ShadCard(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    children: [
+                      // Profile Photo
+                      Stack(
+                        children: [
+                          Container(
+                            width: 96,
+                            height: 96,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 4,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.blue.withValues(alpha: 0.15),
+                                  blurRadius: 20,
+                                  spreadRadius: 0,
+                                  offset: const Offset(0, 8),
                                 ),
-                                onSelected: (value) async {
-                                  if (value == 'camera') {
-                                    final picked = await ImagePicker()
-                                        .pickImage(
-                                          source: ImageSource.camera,
-                                          maxWidth: 1000,
-                                          maxHeight: 1000,
-                                          imageQuality: 85,
-                                        );
-                                    if (picked != null) {
-                                      await _updateProfilePhoto(
-                                        File(picked.path),
-                                      );
-                                    }
-                                  } else if (value == 'gallery') {
-                                    final picked = await ImagePicker()
-                                        .pickImage(
-                                          source: ImageSource.gallery,
-                                          maxWidth: 1000,
-                                          maxHeight: 1000,
-                                          imageQuality: 85,
-                                        );
-                                    if (picked != null) {
-                                      await _updateProfilePhoto(
-                                        File(picked.path),
-                                      );
-                                    }
-                                  } else if (value == 'remove') {
-                                    await _updateProfilePhoto(null);
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  const PopupMenuItem(
-                                    value: 'camera',
-                                    child: Text('Take Photo'),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'gallery',
-                                    child: Text('Choose from Gallery'),
-                                  ),
-                                  if (photoUrl != null)
-                                    const PopupMenuItem(
-                                      value: 'remove',
-                                      child: Text('Remove Photo'),
+                              ],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(48),
+                              child: (photoUrl != null && photoUrl.isNotEmpty)
+                                  ? Image.network(
+                                      photoUrl,
+                                      fit: BoxFit.cover,
+                                      width: 92,
+                                      height: 92,
+                                    )
+                                  : Container(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [Colors.blue[400]!, Colors.purple[400]!],
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.person,
+                                        size: 40,
+                                        color: Colors.white,
+                                      ),
                                     ),
-                                ],
+                            ),
+                          ),
+                          Positioned(
+                            bottom: -2,
+                            right: -2,
+                            child: GestureDetector(
+                              onTap: () => _showPhotoOptions(),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [Colors.blue[600]!, Colors.purple[600]!],
+                                  ),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 3),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.blue.withValues(alpha: 0.3),
+                                      blurRadius: 8,
+                                      spreadRadius: 0,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.camera_alt,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Name
+                      Text(
+                        fullName,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      
+                      if (bio.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          bio,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 15,
+                            height: 1.4,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      
+                      const SizedBox(height: 20),
+                      
+                      // Location
+                      ShadBadge(
+                        backgroundColor: Colors.grey[100],
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.location_on,
+                              size: 16,
+                              color: Colors.black54,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              location.isNotEmpty ? location : 'Location not set',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black87,
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 18),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Stats Card
+                ShadCard(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Events Attended',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [Colors.blue[600]!, Colors.purple[600]!],
+                              ),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.blue.withValues(alpha: 0.3),
+                                  blurRadius: 12,
+                                  spreadRadius: 0,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.event,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            '${data?['eventsAttended'] ?? 0}',
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Activities Card
+                if ((data?['activities'] as List?)?.isNotEmpty ?? false)
+                  ShadCard(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          fullName,
-                          style: const TextStyle(
-                            fontSize: 26,
+                          'Activity Preferences',
+                          style: TextStyle(
+                            fontSize: 18,
                             fontWeight: FontWeight.bold,
                             color: Colors.black,
                           ),
                         ),
-                        if (bio.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(
-                              top: 4.0,
-                              bottom: 8.0,
-                            ),
-                            child: Text(
-                              bio,
-                              style: const TextStyle(
-                                color: Colors.black87,
-                                fontSize: 15,
-                                fontStyle: FontStyle.italic,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.location_on,
-                              color: Colors.blue,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              location,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                color: Colors.black,
-                              ),
-                            ),
-                          ],
-                        ),
                         const SizedBox(height: 12),
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
+                              width: 48,
+                              height: 48,
                               decoration: BoxDecoration(
-                                color: Colors.grey[100],
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.emoji_events,
-                                    color: Colors.amber,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${data?['eventsAttended'] ?? 0} Events',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      color: Colors.black87,
-                                      fontWeight: FontWeight.w500,
-                                    ),
+                                gradient: LinearGradient(
+                                  colors: [Colors.blue[600]!, Colors.purple[600]!],
+                                ),
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.blue.withValues(alpha: 0.3),
+                                    blurRadius: 12,
+                                    spreadRadius: 0,
+                                    offset: const Offset(0, 6),
                                   ),
                                 ],
                               ),
+                              child: const Icon(
+                                Icons.directions_run,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: (data?['activities'] as List<dynamic>? ?? [])
+                                    .map<Widget>((activity) {
+                                      String displayActivity;
+                                      if (activity.toString() == 'run') {
+                                        displayActivity = 'Running';
+                                      } else if (activity.toString() == 'ride') {
+                                        displayActivity = 'Cycling';
+                                      } else {
+                                        displayActivity = activity.toString();
+                                      }
+                                      
+                                      return ShadBadge(
+                                        backgroundColor: Colors.grey[100],
+                                        child: Text(
+                                          displayActivity,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                      );
+                                    })
+                                    .toList(),
+                              ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 18),
-                        const Text(
-                          'Ready for your next adventure!',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.black,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                        const SizedBox(height: 32),
                       ],
                     ),
                   ),
-                ),
-                Positioned(
-                  top: 10,
-                  right: 16,
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.settings,
-                      color: Colors.black,
-                      size: 28,
-                    ),
-                    tooltip: 'Edit Profile',
-                    onPressed: () {
-                      showModalBottomSheet(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (context) => const EditProfileSheet(),
-                      );
-                    },
+                
+                const SizedBox(height: 24),
+                
+                // Friends Card
+                ShadCard(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Friends',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                          ShadButton(
+                            onPressed: () => _showAddFriendModal(),
+                            backgroundColor: Colors.blue[600],
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.person_add, color: Colors.white, size: 16),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Add Friend',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _buildFriendsList(data),
+                    ],
                   ),
                 ),
+                
+                const SizedBox(height: 32),
               ],
             ),
           ),
+        ),
         );
       },
     );
@@ -329,22 +1100,51 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
   String _bio = '';
   String _zipCode = '';
   String _gender = '';
+  String _phoneNumber = '';
+  String _newPhoneNumber = '';
+  bool _phoneChanged = false;
+  String? _verificationId;
   final Set<String> _activities = {'run', 'ride'}; // Default to both
   String _units = 'Imperial';
   bool _isLoading = true;
   final _bioController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _otpController = TextEditingController();
+
+  void _showSnackBar(String message, {Color? backgroundColor}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor ?? Colors.green,
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _loadUserData();
-    _bioController.text = _bio;
   }
 
   @override
   void dispose() {
     _bioController.dispose();
+    _phoneController.dispose();
+    _otpController.dispose();
     super.dispose();
+  }
+
+  void _toggleActivity(String activity) {
+    setState(() {
+      if (_activities.contains(activity)) {
+        if (_activities.length > 1) {
+          _activities.remove(activity);
+        }
+      } else {
+        _activities.add(activity);
+      }
+    });
   }
 
   Future<void> _loadUserData() async {
@@ -362,11 +1162,29 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           _bio = data['bio'] ?? '';
           _zipCode = data['zipCode'] ?? '';
           _gender = data['gender'] ?? '';
+          _phoneNumber = data['phoneNumber'] ?? '';
+          _newPhoneNumber = _phoneNumber;
           _activities.clear();
           _activities.addAll(
             List<String>.from(data['activities'] ?? ['run', 'ride']),
           );
           _units = data['units'] ?? 'Imperial';
+          _bioController.text = _bio;
+          
+          // Format phone number for display (remove +1 prefix if present)
+          String displayPhone = _phoneNumber;
+          if (displayPhone.startsWith('+1')) {
+            displayPhone = displayPhone.substring(2);
+          }
+          // Apply phone number formatting
+          if (displayPhone.length == 10) {
+            displayPhone = '(${displayPhone.substring(0, 3)}) ${displayPhone.substring(3, 6)}-${displayPhone.substring(6)}';
+          }
+          _phoneController.text = displayPhone;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
           _isLoading = false;
         });
       }
@@ -376,9 +1194,11 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
   Future<void> _saveProfile() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_activities.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select at least one activity')),
-      );
+      _showSnackBar('Please select at least one activity', backgroundColor: Colors.red);
+      return;
+    }
+    if (_phoneChanged) {
+      _showSnackBar('Please verify your phone number before saving', backgroundColor: Colors.red);
       return;
     }
 
@@ -388,6 +1208,20 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
     setState(() => _isLoading = true);
 
     try {
+      // Get current user data to check if name changed
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      
+      final currentData = currentUserDoc.data() ?? {};
+      final currentFirstName = currentData['firstName'] ?? '';
+      final currentLastName = currentData['lastName'] ?? '';
+      
+      // Check if name is changing
+      final nameChanged = _firstName != currentFirstName || _lastName != currentLastName;
+      
+      // Update user profile with standardized schema
       await FirebaseFirestore.instance.collection('users').doc(user.uid).update(
         {
           'firstName': _firstName,
@@ -395,233 +1229,1640 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           'bio': _bio,
           'zipCode': _zipCode,
           'gender': _gender,
+          'phoneNumber': _newPhoneNumber,
           'activities': _activities.toList(),
           'units': _units,
-          'eventsAttended': FieldValue.increment(0), // Ensures field exists
+          'updatedAt': FieldValue.serverTimestamp(),
         },
       );
 
+      // If name changed, update all events created by this user
+      if (nameChanged) {
+        final newCreatorName = '$_firstName $_lastName'.trim();
+        final userEvents = await FirebaseFirestore.instance
+            .collection('events')
+            .where('creatorId', isEqualTo: user.uid)
+            .get();
+        
+        // Update creator name in all user's events
+        final batch = FirebaseFirestore.instance.batch();
+        for (final doc in userEvents.docs) {
+          batch.update(doc.reference, {'creatorName': newCreatorName});
+        }
+        await batch.commit();
+      }
+
       if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile updated successfully')),
-      );
+      Navigator.of(context).pop(true);
+      _showSnackBar('Profile updated successfully');
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Failed to update profile')));
+      _showSnackBar('Failed to update profile', backgroundColor: Colors.red);
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showDeleteAccountDialog() {
+    final confirmationController = TextEditingController();
+    bool isConfirmationValid = false;
+    bool isDeleting = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning, color: Colors.red[600], size: 24),
+              const SizedBox(width: 8),
+              const Text('Delete Account'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This action cannot be undone. This will permanently delete your account and remove all your data.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[700],
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Type "$_firstName" to confirm:',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: confirmationController,
+                decoration: InputDecoration(
+                  hintText: 'Enter your first name',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.red[400]!, width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+                onChanged: (value) {
+                  setDialogState(() {
+                    isConfirmationValid = value.trim() == _firstName;
+                  });
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isDeleting ? null : () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: isDeleting || !isConfirmationValid
+                  ? null
+                  : () async {
+                      setDialogState(() => isDeleting = true);
+                      await _deleteAccount();
+                      if (context.mounted) Navigator.of(context).pop();
+                    },
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red[600],
+              ),
+              child: isDeleting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Delete Account'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      print('DEBUG: Starting account deletion for user ${user.uid}');
+      
+      // 1. Get user data before deletion for cleanup
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final userData = userDoc.data() ?? {};
+      final userName = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
+      
+      // 2. Remove user from all events they joined (as participant)
+      print('DEBUG: Removing user from joined events');
+      final joinedEvents = await FirebaseFirestore.instance
+          .collection('events')
+          .where('participants', arrayContains: user.uid)
+          .get();
+      
+      final batch1 = FirebaseFirestore.instance.batch();
+      for (final eventDoc in joinedEvents.docs) {
+        final eventData = eventDoc.data();
+        final participants = List<String>.from(eventData['participants'] ?? []);
+        final participantsData = List<Map<String, dynamic>>.from(eventData['participantsData'] ?? []);
+        
+        // Remove user from participants arrays
+        participants.removeWhere((uid) => uid == user.uid);
+        participantsData.removeWhere((participant) => participant['uid'] == user.uid);
+        
+        batch1.update(eventDoc.reference, {
+          'participants': participants,
+          'participantsData': participantsData,
+        });
+      }
+      await batch1.commit();
+      
+      // 3. Remove user from friends lists of other users
+      print('DEBUG: Removing user from friends lists');
+      final allUsers = await FirebaseFirestore.instance
+          .collection('users')
+          .get();
+      
+      final batch2 = FirebaseFirestore.instance.batch();
+      for (final otherUserDoc in allUsers.docs) {
+        if (otherUserDoc.id == user.uid) continue;
+        
+        final otherUserData = otherUserDoc.data();
+        final friends = List<Map<String, dynamic>>.from(otherUserData['friends'] ?? []);
+        final friendRequests = List<Map<String, dynamic>>.from(otherUserData['friendRequests'] ?? []);
+        
+        // Remove deleted user from friends list
+        final originalFriendsLength = friends.length;
+        friends.removeWhere((friend) => friend['uid'] == user.uid);
+        
+        // Remove any pending friend requests from deleted user
+        final originalRequestsLength = friendRequests.length;
+        friendRequests.removeWhere((request) => request['uid'] == user.uid);
+        
+        // Only update if there were changes
+        if (friends.length != originalFriendsLength || friendRequests.length != originalRequestsLength) {
+          batch2.update(otherUserDoc.reference, {
+            'friends': friends,
+            'friendRequests': friendRequests,
+          });
+        }
+      }
+      await batch2.commit();
+      
+      // 4. Delete user's created events
+      print('DEBUG: Deleting user created events');
+      final userEvents = await FirebaseFirestore.instance
+          .collection('events')
+          .where('creatorId', isEqualTo: user.uid)
+          .get();
+      
+      final batch3 = FirebaseFirestore.instance.batch();
+      for (final doc in userEvents.docs) {
+        // Delete event messages subcollection
+        final messages = await doc.reference.collection('messages').get();
+        for (final messageDoc in messages.docs) {
+          batch3.delete(messageDoc.reference);
+        }
+        // Delete the event itself
+        batch3.delete(doc.reference);
+      }
+      await batch3.commit();
+      
+      // 5. Delete user's message photos from Storage
+      print('DEBUG: Deleting user message photos');
+      try {
+        final messagePhotosRef = FirebaseStorage.instance
+            .ref()
+            .child('event_messages');
+        // Note: We can't easily delete all user's message photos without knowing specific paths
+        // In production, you might want to track user's uploaded files
+      } catch (e) {
+        print('Note: Could not delete all message photos: $e');
+      }
+
+      // 6. Delete user's profile photo
+      print('DEBUG: Deleting profile photo');
+      try {
+        await FirebaseStorage.instance
+            .ref()
+            .child('profile_photos')
+            .child('${user.uid}.jpg')
+            .delete();
+      } catch (e) {
+        // Photo might not exist, ignore error
+        print('Note: Profile photo not found or already deleted');
+      }
+
+      // 7. Delete all notifications related to this user
+      print('DEBUG: Deleting user notifications');
+      final userNotifications = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      
+      final notificationsBatch = FirebaseFirestore.instance.batch();
+      for (final notificationDoc in userNotifications.docs) {
+        notificationsBatch.delete(notificationDoc.reference);
+      }
+      
+      // Also delete notifications that reference this user in data
+      final relatedNotifications = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('data.fromUserId', isEqualTo: user.uid)
+          .get();
+          
+      for (final notificationDoc in relatedNotifications.docs) {
+        notificationsBatch.delete(notificationDoc.reference);
+      }
+      await notificationsBatch.commit();
+
+      // 8. Delete user document from Firestore
+      print('DEBUG: Deleting user document');
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .delete();
+
+      // 9. Delete the Firebase Auth user
+      print('DEBUG: Deleting Firebase Auth user');
+      await user.delete();
+      
+      print('DEBUG: Account deletion completed successfully');
+
+      // Navigate to login page
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+        (route) => false,
+      );
+      
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('Failed to delete account: ${e.toString()}', backgroundColor: Colors.red);
+    }
+  }
+
+  Future<void> _verifyPhoneNumber() async {
+    if (_newPhoneNumber.isEmpty) {
+      _showSnackBar('Please enter a phone number', backgroundColor: Colors.red);
+      return;
+    }
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      final digitsOnly = _newPhoneNumber.replaceAll(RegExp(r'[^\d]'), '');
+      if (digitsOnly.length != 10) {
+        _showSnackBar('Please enter a valid 10-digit phone number', backgroundColor: Colors.red);
+        setState(() => _isLoading = false);
+        return;
+      }
+      
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: '+1$digitsOnly',
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          // Auto-verification completed
+          await _updatePhoneNumber();
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          setState(() => _isLoading = false);
+          _showSnackBar('Phone verification failed: ${e.message}', backgroundColor: Colors.red);
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() {
+            _verificationId = verificationId;
+            _isLoading = false;
+          });
+          _showOTPDialog();
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {
+          setState(() {
+            _verificationId = verificationId;
+            _isLoading = false;
+          });
+        },
+      );
+    } catch (e) {
+      setState(() => _isLoading = false);
+      _showSnackBar('Error: ${e.toString()}', backgroundColor: Colors.red);
+    }
+  }
+
+  void _showOTPDialog() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => PhoneOTPVerificationPage(
+          phoneNumber: _newPhoneNumber,
+          verificationId: _verificationId!,
+          onVerificationComplete: (success) {
+            if (success) {
+              _updatePhoneNumber();
+            }
+            Navigator.of(context).pop();
+          },
+          onCancel: () {
+            setState(() {
+              _verificationId = null;
+              _phoneChanged = false;
+              _newPhoneNumber = _phoneNumber;
+              _phoneController.text = _phoneNumber;
+              _isLoading = false;
+            });
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+  }
+
+
+  Future<void> _updatePhoneNumber() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      // Use the display phone number for storage
+      final displayPhone = _newPhoneNumber;
+
+      // Update the phone number in Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({'phoneNumber': displayPhone});
+
+      setState(() {
+        _phoneNumber = displayPhone;
+        _newPhoneNumber = displayPhone;
+        _phoneChanged = false;
+        _verificationId = null;
+        _otpController.clear();
+        _phoneController.text = displayPhone;
+      });
+
+      _showSnackBar('Phone number updated successfully', backgroundColor: Colors.green);
+    } catch (e) {
+      _showSnackBar('Error updating phone number: ${e.toString()}', backgroundColor: Colors.red);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
+      height: MediaQuery.of(context).size.height * 0.92,
       decoration: const BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 20,
+            spreadRadius: 0,
+            offset: Offset(0, -8),
+          ),
+        ],
       ),
       child: Column(
         children: [
+          // Header
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.grey[100],
+              color: Colors.white,
               borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
+                top: Radius.circular(24),
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
               children: [
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-                const Text(
-                  'Edit Profile',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                TextButton(
-                  onPressed: _isLoading ? null : _saveProfile,
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Save'),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: () => Navigator.of(context).pop(false),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.grey[200]!),
+                        ),
+                        child: Icon(
+                          Icons.close,
+                          color: Colors.grey[600],
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                    const Text(
+                      'Edit Profile',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                    ShadButton(
+                      onPressed: _isLoading ? null : _saveProfile,
+                      child: _isLoading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text('Save'),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
           if (_isLoading)
-            const LinearProgressIndicator()
+            LinearProgressIndicator(
+              backgroundColor: Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[600]!),
+            )
           else
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(24),
                 child: Form(
                   key: _formKey,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFormField(
-                        initialValue: _firstName,
-                        decoration: const InputDecoration(
-                          labelText: 'First Name *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => v == null || v.trim().isEmpty
-                            ? 'Please enter your first name'
-                            : null,
-                        onChanged: (v) => setState(() => _firstName = v.trim()),
+                      // Name Section
+                      _buildSectionTitle('Personal Information'),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildTextField(
+                              initialValue: _firstName,
+                              label: 'First Name',
+                              isRequired: true,
+                              validator: (v) => v == null || v.trim().isEmpty
+                                  ? 'Required'
+                                  : null,
+                              onChanged: (v) => setState(() => _firstName = v.trim()),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _buildTextField(
+                              initialValue: _lastName,
+                              label: 'Last Name',
+                              isRequired: true,
+                              validator: (v) => v == null || v.trim().isEmpty
+                                  ? 'Required'
+                                  : null,
+                              onChanged: (v) => setState(() => _lastName = v.trim()),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
-                      TextFormField(
-                        initialValue: _lastName,
-                        decoration: const InputDecoration(
-                          labelText: 'Last Name *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => v == null || v.trim().isEmpty
-                            ? 'Please enter your last name'
-                            : null,
-                        onChanged: (v) => setState(() => _lastName = v.trim()),
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
+                      _buildTextField(
                         controller: _bioController,
-                        maxLength: 160,
-                        decoration: const InputDecoration(
-                          labelText: 'Bio',
-                          border: OutlineInputBorder(),
-                          hintText: 'Tell us about yourself...',
-                          counterText: '',
-                        ),
+                        label: 'Bio',
+                        hint: 'Tell us about yourself...',
                         maxLines: 3,
+                        maxLength: 160,
                         onChanged: (v) => setState(() => _bio = v),
                       ),
+
+                      const SizedBox(height: 32),
+
+                      // Location Section
+                      _buildSectionTitle('Location'),
                       const SizedBox(height: 16),
-                      TextFormField(
+                      _buildTextField(
                         initialValue: _zipCode,
-                        decoration: const InputDecoration(
-                          labelText: 'ZIP Code *',
-                          border: OutlineInputBorder(),
-                        ),
+                        label: 'ZIP Code',
+                        isRequired: true,
                         keyboardType: TextInputType.number,
                         inputFormatters: [
                           FilteringTextInputFormatter.digitsOnly,
                           LengthLimitingTextInputFormatter(5),
                         ],
                         validator: (v) => v == null || v.length != 5
-                            ? 'Enter a valid ZIP code'
+                            ? 'Enter valid ZIP'
                             : null,
                         onChanged: (v) => setState(() => _zipCode = v),
                       ),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'Activity Preferences *',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
+
+                      const SizedBox(height: 32),
+
+                      // Phone Number Section
+                      _buildSectionTitle('Phone Number'),
+                      const SizedBox(height: 16),
+                      Row(
                         children: [
-                          FilterChip(
-                            label: const Text('Run'),
-                            selected: _activities.contains('run'),
-                            onSelected: (selected) {
-                              setState(() {
-                                if (selected) {
-                                  _activities.add('run');
-                                } else if (_activities.length > 1) {
-                                  _activities.remove('run');
-                                }
-                              });
-                            },
+                          Expanded(
+child: Container(
+                              height: 56, // Fixed height to ensure alignment
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey[300]!),
+                                borderRadius: BorderRadius.circular(16),
+                                color: Colors.grey[50],
+                              ),
+                              child: Row(
+                                children: [
+                                  // +1 prefix
+                                  Container(
+                                    height: double.infinity,
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        right: BorderSide(color: Colors.grey[300]!),
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '+1',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          color: Colors.grey[700],
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: _phoneController,
+                                      keyboardType: TextInputType.phone,
+                                      inputFormatters: [_PhoneNumberFormatter()],
+                                      decoration: InputDecoration(
+                                        labelText: _phoneController.text.isEmpty ? 'Phone Number *' : null,
+                                        border: InputBorder.none,
+                                        enabledBorder: InputBorder.none,
+                                        focusedBorder: InputBorder.none,
+                                        filled: false,
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                        labelStyle: TextStyle(
+                                          color: Colors.grey[700],
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      validator: (v) => v == null || v.trim().isEmpty
+                                          ? 'Phone number required'
+                                          : null,
+                                      onChanged: (v) {
+                                        final digitsOnly = v.replaceAll(RegExp(r'[^\d]'), '');
+                                        final originalDigitsOnly = _phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
+                                        setState(() {
+                                          _newPhoneNumber = v.trim();
+                                          // Only show verify button if we have 10 digits and it's different from original
+                                          _phoneChanged = digitsOnly.length == 10 && digitsOnly != originalDigitsOnly;
+                                          // This will rebuild the widget and update the hint text
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
-                          FilterChip(
-                            label: const Text('Ride'),
-                            selected: _activities.contains('ride'),
-                            onSelected: (selected) {
-                              setState(() {
-                                if (selected) {
-                                  _activities.add('ride');
-                                } else if (_activities.length > 1) {
-                                  _activities.remove('ride');
-                                }
-                              });
-                            },
+                          const SizedBox(width: 12),
+                          if (_phoneChanged)
+                            ShadButton(
+                              onPressed: _isLoading ? null : () => _verifyPhoneNumber(),
+                              backgroundColor: Colors.blue[600],
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Verify',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                            ),
+                        ],
+                      ),
+                      if (_phoneChanged)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            'New phone number entered. Tap "Verify" to confirm.',
+                            style: TextStyle(
+                              color: Colors.orange[600],
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+
+                      const SizedBox(height: 32),
+
+                      // Activities Section
+                      _buildSectionTitle('Activity Preferences'),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ShadButton(
+                              onPressed: () => _toggleActivity('run'),
+                              backgroundColor: _activities.contains('run')
+                                  ? Colors.black
+                                  : Colors.white,
+                              foregroundColor: _activities.contains('run')
+                                  ? Colors.white
+                                  : Colors.black87,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.directions_run,
+                                    color: _activities.contains('run')
+                                        ? Colors.white
+                                        : Colors.black54,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Running',
+                                    style: TextStyle(
+                                      color: _activities.contains('run')
+                                          ? Colors.white
+                                          : Colors.black87,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ShadButton(
+                              onPressed: () => _toggleActivity('ride'),
+                              backgroundColor: _activities.contains('ride')
+                                  ? Colors.black
+                                  : Colors.white,
+                              foregroundColor: _activities.contains('ride')
+                                  ? Colors.white
+                                  : Colors.black87,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.directions_bike,
+                                    color: _activities.contains('ride')
+                                        ? Colors.white
+                                        : Colors.black54,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Cycling',
+                                    style: TextStyle(
+                                      color: _activities.contains('ride')
+                                          ? Colors.white
+                                          : Colors.black87,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ],
                       ),
                       if (_activities.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
                           child: Text(
                             'Select at least one activity',
-                            style: TextStyle(color: Colors.red, fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.red[600],
+                              fontSize: 12,
+                            ),
                           ),
                         ),
+
+                      const SizedBox(height: 32),
+
+                      // Preferences Section
+                      _buildSectionTitle('Preferences'),
                       const SizedBox(height: 16),
-                      DropdownButtonFormField<String>(
+                      _buildDropdown(
                         value: _gender.isNotEmpty ? _gender : null,
-                        decoration: const InputDecoration(
-                          labelText: 'Gender *',
-                          border: OutlineInputBorder(),
-                        ),
+                        label: 'Gender',
+                        isRequired: true,
                         items: const [
                           DropdownMenuItem(value: 'Male', child: Text('Male')),
-                          DropdownMenuItem(
-                            value: 'Female',
-                            child: Text('Female'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'Non-binary',
-                            child: Text('Non-binary'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'Prefer not to say',
-                            child: Text('Prefer not to say'),
-                          ),
+                          DropdownMenuItem(value: 'Female', child: Text('Female')),
+                          DropdownMenuItem(value: 'Non-binary', child: Text('Non-binary')),
+                          DropdownMenuItem(value: 'Prefer not to say', child: Text('Prefer not to say')),
                         ],
                         onChanged: (v) => setState(() => _gender = v ?? ''),
-                        validator: (v) => v == null || v.isEmpty
-                            ? 'Please select your gender'
-                            : null,
+                        validator: (v) => v == null || v.isEmpty ? 'Required' : null,
                       ),
                       const SizedBox(height: 16),
-                      DropdownButtonFormField<String>(
+                      _buildDropdown(
                         value: _units,
-                        decoration: const InputDecoration(
-                          labelText: 'Units *',
-                          border: OutlineInputBorder(),
-                        ),
+                        label: 'Units',
+                        isRequired: true,
                         items: const [
-                          DropdownMenuItem(
-                            value: 'Imperial',
-                            child: Text('Imperial (mi)'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'Metric',
-                            child: Text('Metric (km)'),
-                          ),
+                          DropdownMenuItem(value: 'Imperial', child: Text('Imperial (mi)')),
+                          DropdownMenuItem(value: 'Metric', child: Text('Metric (km)')),
                         ],
-                        onChanged: (v) =>
-                            setState(() => _units = v ?? 'Imperial'),
+                        onChanged: (v) => setState(() => _units = v ?? 'Imperial'),
                       ),
+
+                      const SizedBox(height: 40),
+                      
+                      // Delete Account Button
+                      SizedBox(
+                        width: double.infinity,
+                        child: ShadButton.outline(
+                          onPressed: _isLoading ? null : () => _showDeleteAccountDialog(),
+                          child: Text(
+                            'Delete Account',
+                            style: TextStyle(
+                              color: Colors.red[600],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      
+                      // Sign Out Button
+                      SizedBox(
+                        width: double.infinity,
+                        child: ShadButton.outline(
+                          onPressed: _isLoading ? null : _signOut,
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.logout, color: Colors.black, size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                'Sign Out',
+                                style: TextStyle(
+                                  color: Colors.black,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 40),
                     ],
                   ),
                 ),
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('Failed to sign out: ${e.toString()}', backgroundColor: Colors.red);
+    }
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
+        color: Colors.black,
+      ),
+    );
+  }
+
+  Widget _buildTextField({
+    String? initialValue,
+    TextEditingController? controller,
+    required String label,
+    String? hint,
+    bool isRequired = false,
+    int maxLines = 1,
+    int? maxLength,
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
+    String? Function(String?)? validator,
+    void Function(String)? onChanged,
+  }) {
+    return TextFormField(
+      initialValue: controller == null ? initialValue : null,
+      controller: controller,
+      maxLines: maxLines,
+      maxLength: maxLength,
+      keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
+      decoration: InputDecoration(
+        labelText: isRequired ? '$label *' : label,
+        hintText: hint,
+        counterText: maxLength != null ? '' : null,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.blue[600]!, width: 2),
+        ),
+        filled: true,
+        fillColor: Colors.grey[50],
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        labelStyle: TextStyle(
+          color: Colors.grey[700],
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      validator: validator,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildDropdown({
+    required String? value,
+    required String label,
+    bool isRequired = false,
+    required List<DropdownMenuItem<String>> items,
+    void Function(String?)? onChanged,
+    String? Function(String?)? validator,
+  }) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: isRequired ? '$label *' : label,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.blue[600]!, width: 2),
+        ),
+        filled: true,
+        fillColor: Colors.grey[50],
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        labelStyle: TextStyle(
+          color: Colors.grey[700],
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      items: items,
+      onChanged: onChanged,
+      validator: validator,
+    );
+  }
+
+}
+
+class AddFriendModal extends StatefulWidget {
+  const AddFriendModal({super.key});
+
+  @override
+  State<AddFriendModal> createState() => _AddFriendModalState();
+}
+
+class _AddFriendModalState extends State<AddFriendModal> {
+  final TextEditingController _searchController = TextEditingController();
+  List<Map<String, dynamic>> _searchResults = [];
+  bool _isSearching = false;
+  final Set<String> _pendingRequests = {};
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _showSnackBar(String message, {Color? backgroundColor}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor ?? Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _searchUsers(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+    });
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      
+      final queryLower = query.toLowerCase();
+      
+      // Get current user data to avoid including self and existing friends
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      
+      final currentUserData = currentUserDoc.data() ?? {};
+      final currentFriends = List<Map<String, dynamic>>.from(currentUserData['friends'] ?? []);
+      final friendIds = currentFriends.map((f) => f['uid']).toSet();
+      
+      // Search users by name or phone number
+      final usersSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .get();
+      
+      final results = usersSnapshot.docs
+          .where((doc) {
+            final data = doc.data();
+            final firstName = (data['firstName'] ?? '').toString().toLowerCase();
+            final lastName = (data['lastName'] ?? '').toString().toLowerCase();
+            final fullName = '$firstName $lastName';
+            
+            // Get phone number
+            final phoneNumber = data['phoneNumber']?.toString() ?? '';
+            
+            // Filter out current user and existing friends
+            return doc.id != user.uid &&
+                   !friendIds.contains(doc.id) &&
+                   (firstName.contains(queryLower) || 
+                    lastName.contains(queryLower) ||
+                    fullName.contains(queryLower) ||
+                    phoneNumber.contains(query)); // Exact match for phone
+          })
+          .map((doc) {
+            final data = doc.data();
+            
+            // Get phone number for display
+            final displayPhone = data['phoneNumber']?.toString();
+            
+            return {
+              'uid': doc.id,
+              'firstName': data['firstName'] ?? '',
+              'lastName': data['lastName'] ?? '',
+              'name': '${data['firstName'] ?? ''} ${data['lastName'] ?? ''}'.trim(),
+              'phoneNumber': displayPhone,
+              'photoUrl': data['photoUrl'],
+            };
+          })
+          .take(10) // Limit results
+          .toList();
+
+      setState(() {
+        _searchResults = results;
+        _isSearching = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isSearching = false;
+        _searchResults = [];
+      });
+      print('Error searching users: $e');
+    }
+  }
+  
+  Future<void> _sendFriendRequest(Map<String, dynamic> targetUser) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      print('ERROR: No authenticated user found');
+      return;
+    }
+    
+    final targetUserId = targetUser['uid'];
+    if (targetUserId == null || targetUserId.isEmpty) {
+      print('ERROR: Target user ID is null or empty');
+      _showSnackBar('Invalid user selected', backgroundColor: Colors.red);
+      return;
+    }
+    
+    if (_pendingRequests.contains(targetUserId)) {
+      print('DEBUG: Friend request already pending for user: $targetUserId');
+      return;
+    }
+
+    print('DEBUG: Starting friend request from ${user.uid} to $targetUserId');
+
+    try {
+      setState(() {
+        _pendingRequests.add(targetUserId);
+      });
+      
+      // Get current user data with comprehensive error checking
+      print('DEBUG: Fetching current user data');
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      
+      if (!currentUserDoc.exists) {
+        throw Exception('Current user document does not exist in Firestore');
+      }
+      
+      final currentUserData = currentUserDoc.data() ?? {};
+      print('DEBUG: Current user data: ${currentUserData.keys.toList()}');
+      
+      // Get user data with standardized schema
+      final phoneNumber = currentUserData['phoneNumber']?.toString();
+      final photoUrl = currentUserData['photoUrl']?.toString();
+      
+      // Build friend request with standardized schema
+      final currentUserRequest = <String, dynamic>{
+        'uid': user.uid,
+        'name': '${currentUserData['firstName'] ?? ''} ${currentUserData['lastName'] ?? ''}'.trim(),
+        'createdAt': Timestamp.now(),
+      };
+      
+      // Add optional fields if present
+      if (phoneNumber?.isNotEmpty == true) {
+        currentUserRequest['phoneNumber'] = phoneNumber;
+        print('DEBUG: Added phone number to request: $phoneNumber');
+      }
+      
+      if (photoUrl?.isNotEmpty == true) {
+        currentUserRequest['photoUrl'] = photoUrl;
+        print('DEBUG: Added photo URL to request');
+      }
+      
+      print('DEBUG: Friend request object: $currentUserRequest');
+      
+      // Verify target user exists before sending request
+      final targetUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(targetUserId)
+          .get();
+          
+      if (!targetUserDoc.exists) {
+        throw Exception('Target user document does not exist');
+      }
+      
+      print('DEBUG: Target user verified, sending friend request');
+      
+      // Add friend request to target user with atomic operation
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(targetUserId)
+          .set({
+        'friendRequests': FieldValue.arrayUnion([currentUserRequest]),
+      }, SetOptions(merge: true));
+
+      print('DEBUG: Friend request successfully sent to $targetUserId');
+      
+      // Create notification for the friend request
+      await FirebaseFirestore.instance.collection('notifications').add({
+        'userId': targetUserId,
+        'type': 'friend_request',
+        'title': 'New Friend Request',
+        'message': '${currentUserRequest['name']} sent you a friend request',
+        'data': {
+          'fromUserId': user.uid,
+          'fromUserName': currentUserRequest['name'],
+          'fromUserPhotoUrl': photoUrl,
+        },
+        'isRead': false,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      
+      // Verify the friend request was actually stored
+      final verifyDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(targetUserId)
+          .get();
+      final friendRequests = verifyDoc.data()?['friendRequests'] as List<dynamic>? ?? [];
+      print('DEBUG: Target user now has ${friendRequests.length} friend requests');
+      print('DEBUG: Created notification for friend request');
+      
+      _showSnackBar('Friend request sent to ${targetUser['name']}');
+    } catch (e, stackTrace) {
+      print('ERROR: Friend request failed: $e');
+      print('STACK TRACE: $stackTrace');
+      
+      // More specific error messages based on error type
+      String errorMessage = 'Failed to send friend request';
+      if (e.toString().contains('permission-denied')) {
+        errorMessage = 'Permission denied. Please check your account settings.';
+      } else if (e.toString().contains('not-found')) {
+        errorMessage = 'User not found. They may have deleted their account.';
+      } else if (e.toString().contains('network')) {
+        errorMessage = 'Network error. Please check your connection.';
+      }
+      
+      _showSnackBar(errorMessage, backgroundColor: Colors.red);
+    } finally {
+      setState(() {
+        _pendingRequests.remove(targetUserId);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.8,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 24,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              
+              // Title
+              const Text(
+                'Add Friends',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Search by name or phone number',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 24),
+              
+              // Search Field
+              TextFormField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search by name or phone number...',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+                onChanged: _searchUsers,
+              ),
+              const SizedBox(height: 16),
+              
+              // Search Results
+              Expanded(
+                child: _isSearching
+                    ? const Center(child: CircularProgressIndicator())
+                    : _searchResults.isEmpty
+                        ? _searchController.text.isNotEmpty
+                            ? Center(
+                                child: Text(
+                                  'No users found',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              )
+                            : Center(
+                                child: Text(
+                                  'Start typing to search for friends',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              )
+                        : ListView.builder(
+                            itemCount: _searchResults.length,
+                            itemBuilder: (context, index) {
+                              final user = _searchResults[index];
+                              final isPending = _pendingRequests.contains(user['uid']);
+                              
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[50],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.grey[200]!),
+                                ),
+                                child: Row(
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 20,
+                                      backgroundColor: Colors.grey[300],
+                                      backgroundImage: user['photoUrl'] != null && user['photoUrl'].isNotEmpty
+                                          ? NetworkImage(user['photoUrl'])
+                                          : null,
+                                      child: user['photoUrl'] == null || user['photoUrl'].isEmpty
+                                          ? Icon(Icons.person, size: 20, color: Colors.grey[600])
+                                          : null,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            user['name'],
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.black87,
+                                            ),
+                                          ),
+                                          if (user['phoneNumber'] != null)
+                                            Text(
+                                              user['phoneNumber'],
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    isPending
+                                        ? const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        : ShadButton(
+                                            onPressed: () => _sendFriendRequest(user),
+                                            backgroundColor: Colors.blue[600],
+                                            child: const Text(
+                                              'Add',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PhoneOTPVerificationPage extends StatefulWidget {
+  final String phoneNumber;
+  final String verificationId;
+  final Function(bool) onVerificationComplete;
+  final VoidCallback onCancel;
+
+  const PhoneOTPVerificationPage({
+    super.key,
+    required this.phoneNumber,
+    required this.verificationId,
+    required this.onVerificationComplete,
+    required this.onCancel,
+  });
+
+  @override
+  State<PhoneOTPVerificationPage> createState() => _PhoneOTPVerificationPageState();
+}
+
+class _PhoneOTPVerificationPageState extends State<PhoneOTPVerificationPage> {
+  final TextEditingController _otpController = TextEditingController();
+  String _otpValue = '';
+  String? _otpError;
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _otpController.dispose();
+    super.dispose();
+  }
+
+  String? _validateOTP(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter the OTP';
+    }
+    if (value.length != 6) {
+      return 'OTP must be 6 digits';
+    }
+    return null;
+  }
+
+  Future<void> _verifyOTP() async {
+    if (_otpValue.length != 6) {
+      setState(() {
+        _otpError = 'Please enter a valid 6-digit code';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _otpError = null;
+    });
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: widget.verificationId,
+        smsCode: _otpValue,
+      );
+      
+      // Verify the credential
+      await FirebaseAuth.instance.currentUser?.updatePhoneNumber(credential);
+      
+      // Show success message briefly before calling completion
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Phone number verified successfully!'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      
+      // Small delay to show success message
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      widget.onVerificationComplete(true);
+    } catch (e) {
+      String errorMsg = 'Invalid OTP Code. Please try again.';
+      if (e is FirebaseAuthException && e.code == 'invalid-verification-code') {
+        errorMsg = 'Invalid OTP Code. Please try again.';
+      }
+      
+      setState(() {
+        _otpError = errorMsg;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: widget.onCancel,
+        ),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              children: [
+                const SizedBox(height: 40),
+                
+                // Phone icon
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[600]!, Colors.purple[600]!],
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withValues(alpha: 0.3),
+                        blurRadius: 20,
+                        spreadRadius: 0,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.phone,
+                    size: 40,
+                    color: Colors.white,
+                  ),
+                ),
+                
+                const SizedBox(height: 48),
+                
+                // Title
+                const Text(
+                  'Enter Verification Code',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                
+                const SizedBox(height: 12),
+                
+                Text(
+                  'We sent a 6-digit code to +1 ${widget.phoneNumber}',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                
+                const SizedBox(height: 40),
+                
+                // OTP Input
+                ShadInputOTPFormField(
+                  id: 'otp',
+                  maxLength: 6,
+                  keyboardType: TextInputType.number,
+                  validator: _validateOTP,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  onChanged: (value) {
+                    _otpController.text = value;
+                    setState(() {
+                      _otpValue = value;
+                      _otpError = null;
+                    });
+                  },
+                  children: const [
+                    ShadInputOTPGroup(
+                      children: [
+                        ShadInputOTPSlot(),
+                        ShadInputOTPSlot(),
+                        ShadInputOTPSlot(),
+                        ShadInputOTPSlot(),
+                        ShadInputOTPSlot(),
+                        ShadInputOTPSlot(),
+                      ],
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Error message
+                if (_otpError != null)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red[200]!),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.error_outline, color: Colors.red[600], size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _otpError!,
+                            style: TextStyle(
+                              color: Colors.red[700],
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                
+                const SizedBox(height: 24),
+                
+                // Verify Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _verifyOTP,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Text(
+                            'Verify Code',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Cancel Button
+                TextButton(
+                  onPressed: widget.onCancel,
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

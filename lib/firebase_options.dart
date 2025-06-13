@@ -63,7 +63,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '894725781218',
     projectId: 'sport-eventsapp',
     storageBucket: 'sport-eventsapp.firebasestorage.app',
-    iosClientId: '894725781218-fk10sc9gak53sdu94u8ua8dh7fbhh02g.apps.googleusercontent.com',
+    iosClientId:
+        '894725781218-fk10sc9gak53sdu94u8ua8dh7fbhh02g.apps.googleusercontent.com',
     iosBundleId: 'com.example.asteroidea',
   );
 }
