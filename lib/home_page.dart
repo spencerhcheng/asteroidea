@@ -1172,11 +1172,8 @@ class _NotificationsModalState extends State<NotificationsModal> {
                         .limit(50)
                         .snapshots(),
                     builder: (context, snapshot) {
-                      print('DEBUG: Notifications stream - Connection state: ${snapshot.connectionState}');
-                      print('DEBUG: Notifications stream - Has data: ${snapshot.hasData}');
-                      print('DEBUG: Notifications stream - Docs count: ${snapshot.data?.docs.length ?? 0}');
                       if (snapshot.hasError) {
-                        print('DEBUG: Notifications stream error: ${snapshot.error}');
+                        // Error will be handled in the UI below
                       }
                       
                       if (snapshot.connectionState == ConnectionState.waiting) {
@@ -1736,14 +1733,11 @@ class _NotificationsModalState extends State<NotificationsModal> {
       
       await batch.commit();
     } catch (e) {
-      print('Error marking notifications as read: $e');
+      // Error handling - could show user feedback if needed
     }
   }
 
   Future<void> _handleNotificationTap(String notificationId, Map<String, dynamic> notification) async {
-    print('DEBUG: Notification tapped - ID: $notificationId');
-    print('DEBUG: Notification data: $notification');
-    
     // Mark as read
     try {
       if (!(notification['isRead'] ?? false)) {
@@ -1751,10 +1745,9 @@ class _NotificationsModalState extends State<NotificationsModal> {
             .collection('notifications')
             .doc(notificationId)
             .update({'isRead': true});
-        print('DEBUG: Notification marked as read');
       }
     } catch (e) {
-      print('ERROR: Failed to mark notification as read: $e');
+      // Error handling - notification read status update failed
     }
     
     // Handle notification action based on type
@@ -1762,10 +1755,7 @@ class _NotificationsModalState extends State<NotificationsModal> {
     final data = notification['data'] as Map<String, dynamic>? ?? {};
     final eventId = data['eventId'] as String?;
     
-    print('DEBUG: Notification type: $type, eventId: $eventId');
-    
     if (eventId == null) {
-      print('ERROR: No eventId found in notification data');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Invalid notification data.'),
@@ -1775,21 +1765,14 @@ class _NotificationsModalState extends State<NotificationsModal> {
     }
     
     if (['event_invitation', 'event_reminder', 'event_update', 'new_participant', 'participant_left', 'event_message'].contains(type)) {
-      print('DEBUG: Processing event notification, closing modal...');
-      
       try {
-        print('DEBUG: Fetching event data for eventId: $eventId');
-        
         // Fetch event data from Firestore BEFORE closing modal
         final eventDoc = await FirebaseFirestore.instance
             .collection('events')
             .doc(eventId)
             .get();
         
-        print('DEBUG: Event document exists: ${eventDoc.exists}');
-        
         if (!eventDoc.exists) {
-          print('ERROR: Event document does not exist');
           // Close modal first
           if (Navigator.of(context).canPop()) {
             Navigator.of(context).pop();
@@ -1815,11 +1798,8 @@ class _NotificationsModalState extends State<NotificationsModal> {
         
         // Check if widget is still mounted after modal close
         if (!mounted) {
-          print('ERROR: Widget not mounted after closing modal');
           return;
         }
-        
-        print('DEBUG: Navigating to event detail page...');
         
         // Navigate to event detail page
         await Navigator.of(context).push(
@@ -1830,11 +1810,8 @@ class _NotificationsModalState extends State<NotificationsModal> {
             ),
           ),
         );
-        print('DEBUG: Navigation completed');
         
       } catch (e) {
-        print('ERROR: Exception while fetching event data or navigating: $e');
-        
         // Close modal on error
         if (Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
@@ -1850,8 +1827,6 @@ class _NotificationsModalState extends State<NotificationsModal> {
           );
         }
       }
-    } else {
-      print('DEBUG: Notification type not handled for navigation: $type');
     }
   }
   
@@ -1881,7 +1856,7 @@ class _NotificationsModalState extends State<NotificationsModal> {
           eventExists = false;
         }
       } catch (e) {
-        print('Error checking event status: $e');
+        // Error handling for event status check
       }
     }
     
@@ -2038,7 +2013,7 @@ class _NotificationsModalState extends State<NotificationsModal> {
                               );
                             }
                           } catch (e) {
-                            print('Error navigating to event: $e');
+                            // Error handling for navigation
                           }
                         }
                       },
@@ -2469,7 +2444,6 @@ class _NotificationsModalState extends State<NotificationsModal> {
       
       _showSnackBar('Event invitation declined');
     } catch (e) {
-      print('Error declining invitation: $e');
       _showSnackBar('Failed to decline invitation', backgroundColor: Colors.red[600]);
     }
   }

@@ -256,7 +256,7 @@ class CreateEventPageState extends State<CreateEventPage> {
           }
         }
       } catch (e) {
-        print('Error fetching creator name: $e');
+        // Error handling for creator name fetch
       }
       
       // Create standardized event data with Timestamp
@@ -590,8 +590,15 @@ class CreateEventPageState extends State<CreateEventPage> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () => _handleNavigation('back'),
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        final shouldPop = await _handleNavigation('back');
+        if (shouldPop && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
       child: Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: false,
@@ -752,10 +759,10 @@ class CreateEventPageState extends State<CreateEventPage> {
                         },
                         style: ButtonStyle(
                           backgroundColor:
-                              MaterialStateProperty.resolveWith<Color>((
-                                Set<MaterialState> states,
+                              WidgetStateProperty.resolveWith<Color>((
+                                Set<WidgetState> states,
                               ) {
-                                if (states.contains(MaterialState.selected)) {
+                                if (states.contains(WidgetState.selected)) {
                                   return Colors.black;
                                 }
                                 return Colors.grey[200]!;

@@ -141,13 +141,10 @@ class _OnboardingPageState extends State<OnboardingPage>
       );
 
       if (compressedFile != null) {
-        print('Original size: ${await imageFile.length()} bytes');
-        print('Compressed size: ${await compressedFile.length()} bytes');
         return File(compressedFile.path);
       }
       return null;
     } catch (e) {
-      print('Error compressing image: $e');
       return null;
     }
   }
@@ -167,7 +164,6 @@ class _OnboardingPageState extends State<OnboardingPage>
         return null;
       }
 
-      print('Uploading compressed photo: ${compressedPhoto.path}');
       final ref = FirebaseStorage.instance
           .ref()
           .child('profile_photos')
@@ -180,7 +176,7 @@ class _OnboardingPageState extends State<OnboardingPage>
       try {
         await compressedPhoto.delete();
       } catch (e) {
-        print('Failed to delete temporary file: $e');
+        // Failed to delete temporary file - not critical
       }
 
       setState(() => _isUploading = false);

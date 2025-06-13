@@ -1,0 +1,152 @@
+Analyzing asteroidea...                                         
+
+warning • The value of the field '_isDescriptionExpanded' isn't used • lib/create_event_page.dart:51:8 • unused_field
+   info • Don't invoke 'print' in production code • lib/create_event_page.dart:259:9 • avoid_print
+   info • 'WillPopScope' is deprecated and shouldn't be used. Use PopScope instead. The Android predictive back feature will not work with WillPopScope. This feature was deprecated after v3.12.0-1.0.pre • lib/create_event_page.dart:593:12 • deprecated_member_use
+   info • 'MaterialStateProperty' is deprecated and shouldn't be used. Use WidgetStateProperty instead. Moved to the Widgets layer to make code available outside of Material. This feature was deprecated after v3.19.0-0.3.pre • lib/create_event_page.dart:755:31 • deprecated_member_use
+   info • 'MaterialState' is deprecated and shouldn't be used. Use WidgetState instead. Moved to the Widgets layer to make code available outside of Material. This feature was deprecated after v3.19.0-0.3.pre • lib/create_event_page.dart:756:37 • deprecated_member_use
+   info • 'MaterialState' is deprecated and shouldn't be used. Use WidgetState instead. Moved to the Widgets layer to make code available outside of Material. This feature was deprecated after v3.19.0-0.3.pre • lib/create_event_page.dart:758:53 • deprecated_member_use
+   info • The imported package 'path' isn't a dependency of the importing package • lib/event_detail_page.dart:10:8 • depend_on_referenced_packages
+warning • The value of the local variable 'hasInvitedUsers' isn't used • lib/event_detail_page.dart:1193:11 • unused_local_variable
+warning • The declaration '_showGifPicker' isn't referenced • lib/event_detail_page.dart:2704:8 • unused_element
+   info • Don't invoke 'print' in production code • lib/event_detail_page.dart:2835:7 • avoid_print
+warning • Unused import: 'package:shadcn_ui/shadcn_ui.dart' • lib/home_page.dart:4:8 • unused_import
+warning • Unused import: 'create_event_page.dart' • lib/home_page.dart:5:8 • unused_import
+   info • Unnecessary braces in a string interpolation • lib/home_page.dart:316:23 • unnecessary_brace_in_string_interps
+   info • Unnecessary braces in a string interpolation • lib/home_page.dart:660:90 • unnecessary_brace_in_string_interps
+   info • Unnecessary use of multiple underscores • lib/home_page.dart:699:47 • unnecessary_underscores
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1175:23 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1176:23 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1177:23 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1179:25 • avoid_print
+warning • The value of the local variable 'message' isn't used • lib/home_page.dart:1250:11 • unused_local_variable
+   info • Unnecessary use of multiple underscores • lib/home_page.dart:1326:53 • unnecessary_underscores
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1739:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1744:5 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1745:5 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1754:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1757:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1765:5 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1768:7 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1769:28 • use_build_context_synchronously
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1778:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1781:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1789:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1792:11 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1794:28 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1795:26 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1812:26 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1813:24 • use_build_context_synchronously
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1818:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1822:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1833:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1836:9 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1839:26 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1840:24 • use_build_context_synchronously
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1854:7 • avoid_print
+warning • The declaration '_showEventInvitationDialog' isn't referenced • lib/home_page.dart:1858:8 • unused_element
+   info • Don't invoke 'print' in production code • lib/home_page.dart:1884:9 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/home_page.dart:1889:7 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check • lib/home_page.dart:2031:44 • use_build_context_synchronously
+   info • Don't invoke 'print' in production code • lib/home_page.dart:2041:29 • avoid_print
+   info • Use a 'SizedBox' to add whitespace to a layout • lib/home_page.dart:2183:23 • sized_box_for_whitespace
+   info • Use a 'SizedBox' to add whitespace to a layout • lib/home_page.dart:2212:36 • sized_box_for_whitespace
+   info • Use a 'SizedBox' to add whitespace to a layout • lib/home_page.dart:2238:36 • sized_box_for_whitespace
+   info • Use a 'SizedBox' to add whitespace to a layout • lib/home_page.dart:2268:36 • sized_box_for_whitespace
+   info • Use a 'SizedBox' to add whitespace to a layout • lib/home_page.dart:2294:36 • sized_box_for_whitespace
+   info • Don't invoke 'print' in production code • lib/home_page.dart:2472:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:235:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:236:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:249:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:251:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:273:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:277:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:278:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:297:15 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:318:13 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:321:15 • avoid_print
+   info • Don't invoke 'print' in production code • lib/main.dart:325:13 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/main_navigation.dart:30:26 • use_build_context_synchronously
+warning • Unused import: 'package:shadcn_ui/shadcn_ui.dart' • lib/onboarding_page.dart:4:8 • unused_import
+   info • The imported package 'path' isn't a dependency of the importing package • lib/onboarding_page.dart:12:8 • depend_on_referenced_packages
+warning • Unused import: 'main_navigation.dart' • lib/onboarding_page.dart:13:8 • unused_import
+warning • The value of the field '_progressAnimation' isn't used • lib/onboarding_page.dart:27:26 • unused_field
+   info • The private field _bio could be 'final' • lib/onboarding_page.dart:38:10 • prefer_final_fields
+warning • The value of the field '_bio' isn't used • lib/onboarding_page.dart:38:10 • unused_field
+warning • The value of the field '_isUploading' isn't used • lib/onboarding_page.dart:42:8 • unused_field
+   info • Don't invoke 'print' in production code • lib/onboarding_page.dart:144:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/onboarding_page.dart:145:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/onboarding_page.dart:150:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/onboarding_page.dart:170:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/onboarding_page.dart:183:9 • avoid_print
+warning • The value of the local variable 'pos' isn't used • lib/onboarding_page.dart:212:13 • unused_local_variable
+warning • The declaration '_saveFirestoreProgress' isn't referenced • lib/onboarding_page.dart:1135:16 • unused_element
+   info • The imported package 'path' isn't a dependency of the importing package • lib/profile_page.dart:9:8 • depend_on_referenced_packages
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:84:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:85:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:90:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:98:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:103:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:106:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:114:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:120:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:122:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:125:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:131:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:135:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:140:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:149:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:280:5 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:282:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:466:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:470:5 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:486:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:502:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:508:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:520:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:526:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:529:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:530:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:553:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:575:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:576:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:579:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:580:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:649:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:650:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:652:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1361:7 • avoid_print
+warning • The value of the local variable 'userName' isn't used • lib/profile_page.dart:1369:13 • unused_local_variable
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1372:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1396:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1428:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1447:7 • avoid_print
+warning • The value of the local variable 'messagePhotosRef' isn't used • lib/profile_page.dart:1449:15 • unused_local_variable
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1455:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1459:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1468:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1472:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1495:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1502:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:1505:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2288:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2295:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2301:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2307:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2311:5 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2319:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2330:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2346:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2351:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2354:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2366:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2376:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2399:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2400:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2404:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/profile_page.dart:2405:7 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/profile_page.dart:2663:28 • use_build_context_synchronously
+warning • Unused import: 'package:shared_preferences/shared_preferences.dart' • lib/share_code_page.dart:7:8 • unused_import
+warning • The declaration '_handleQRScan' isn't referenced • lib/share_code_page.dart:91:16 • unused_element
+
+148 issues found. (ran in 3.9s)
