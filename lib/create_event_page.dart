@@ -349,10 +349,16 @@ class CreateEventPageState extends State<CreateEventPage> {
             .doc(widget.eventId)
             .update(eventData);
         
+        // Notify participants about the event changes
+        await _notifyParticipantsOfChanges(widget.eventId!, eventDoc.data()!);
+        
         if (!mounted) return;
         _showSnackBar(
           const SnackBar(content: Text('Event updated successfully!')),
         );
+        
+        // Return true to indicate successful update
+        Navigator.of(context).pop(true);
       } else {
         // Create new event - add creator as first participant
         final userDoc = await FirebaseFirestore.instance
@@ -395,10 +401,152 @@ class CreateEventPageState extends State<CreateEventPage> {
         );
         return;
       }
-      
-      if (!mounted) return;
-      Navigator.of(context).pop();
     }
+  }
+
+  List<String> _getChanges(Map<String, dynamic> originalData) {
+    List<String> changes = [];
+
+    // Check event name
+    if (_eventName != _initialValues['eventName']) {
+      changes.add('Event name changed to "$_eventName"');
+    }
+
+    // Check date
+    if (_date != _initialValues['date']) {
+      if (_date != null) {
+        final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        final dateStr = '${months[_date!.month - 1]} ${_date!.day}, ${_date!.year}';
+        changes.add('Date changed to $dateStr');
+      }
+    }
+
+    // Check time
+    if (_startTime != _initialValues['startTime']) {
+      if (_startTime != null) {
+        final hour = _startTime!.hour > 12 ? _startTime!.hour - 12 : _startTime!.hour == 0 ? 12 : _startTime!.hour;
+        final minute = _startTime!.minute.toString().padLeft(2, '0');
+        final period = _startTime!.hour >= 12 ? 'PM' : 'AM';
+        changes.add('Time changed to $hour:$minute $period');
+      }
+    }
+
+    // Check location
+    if (_address != _initialValues['address']) {
+      changes.add('Location changed to "$_address"');
+    }
+
+    // Check distance
+    if (_distance != _initialValues['distance']) {
+      if (_distance != null) {
+        changes.add('Distance changed to $_distance $_distanceUnit');
+      }
+    }
+
+    // Check pace
+    if (_pace != _initialValues['pace']) {
+      final paceLabels = {
+        'social': 'Social',
+        'fitness': 'Fitness',
+        'competitive': 'Competitive'
+      };
+      changes.add('Pace changed to ${paceLabels[_pace] ?? _pace}');
+    }
+
+    // Check group size
+    if (_groupSize != _initialValues['groupSize']) {
+      if (_groupSize != null) {
+        changes.add('Group size limit changed to $_groupSize');
+      } else {
+        changes.add('Group size limit removed');
+      }
+    }
+
+    // Check privacy
+    if (_isPublic != _initialValues['isPublic']) {
+      changes.add(_isPublic ? 'Event made public' : 'Event made private');
+    }
+
+    // Check event type/category
+    final currentType = _eventType == 'run' ? _runType : _rideType;
+    final initialType = _eventType == 'run' ? _initialValues['runType'] : _initialValues['rideType'];
+    if (currentType != initialType) {
+      final typeLabels = {
+        'road': _eventType == 'run' ? 'Road Run' : 'Road Ride',
+        'trail': 'Trail Run',
+        'track': 'Track Run',
+        'gravel': 'Gravel Ride',
+        'mountain': 'Mountain Bike',
+      };
+      changes.add('Type changed to ${typeLabels[currentType] ?? currentType}');
+    }
+
+    return changes;
+  }
+
+  Future<void> _notifyParticipantsOfChanges(String eventId, Map<String, dynamic> originalEventData) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Get the list of changes
+    final changes = _getChanges(originalEventData);
+    if (changes.isEmpty) return; // No meaningful changes to notify about
+
+    // Get current event data to find participants
+    final eventDoc = await FirebaseFirestore.instance
+        .collection('events')
+        .doc(eventId)
+        .get();
+    
+    if (!eventDoc.exists) return;
+    
+    final eventData = eventDoc.data()!;
+    final participants = List<String>.from(eventData['participants'] ?? []);
+    
+    // Get host information
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    final userData = userDoc.data() ?? {};
+    final firstName = userData['firstName'] ?? '';
+    final lastName = userData['lastName'] ?? '';
+    final hostName = '$firstName $lastName'.trim().isNotEmpty 
+        ? '$firstName $lastName'.trim() 
+        : 'Event host';
+
+    // Create notifications for all participants except the host
+    final batch = FirebaseFirestore.instance.batch();
+    
+    for (final participantId in participants) {
+      if (participantId != user.uid) { // Don't notify the host
+        final notificationRef = FirebaseFirestore.instance.collection('notifications').doc();
+        
+        // Create a summary of changes (limit to first 3 for brevity)
+        final changesSummary = changes.take(3).join(', ');
+        final additionalChanges = changes.length > 3 ? ' and ${changes.length - 3} more changes' : '';
+        
+        batch.set(notificationRef, {
+          'userId': participantId,
+          'type': 'event_update',
+          'title': 'Event Updated',
+          'message': '$hostName updated "${eventData['eventName'] ?? 'the event'}": $changesSummary$additionalChanges',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+          'data': {
+            'eventId': eventId,
+            'eventName': eventData['eventName'],
+            'eventType': eventData['eventType'],
+            'hostName': hostName,
+            'hostPhotoUrl': userData['photoUrl'],
+            'changes': changes,
+          },
+        });
+      }
+    }
+    
+    await batch.commit();
   }
 
   Future<void> _deleteEvent() async {
@@ -450,6 +598,43 @@ class CreateEventPageState extends State<CreateEventPage> {
           title: Text(widget.isEdit ? 'Edit Event' : 'Create Event'),
           backgroundColor: Colors.white,
           elevation: 0,
+          leading: widget.isEdit 
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.black),
+                  onPressed: () async {
+                    if (hasUnsavedChanges) {
+                      final discard = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Discard changes?'),
+                          content: const Text(
+                            'You have unsaved changes. Are you sure you want to leave?',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(context).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                resetForm();
+                                Navigator.of(context).pop(true);
+                              },
+                              child: const Text('Leave'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (discard == true) {
+                        if (context.mounted) Navigator.of(context).pop();
+                      }
+                    } else {
+                      if (context.mounted) Navigator.of(context).pop();
+                    }
+                  },
+                )
+              : null,
           actions: widget.isModal
               ? [
                   IconButton(
@@ -559,6 +744,7 @@ class CreateEventPageState extends State<CreateEventPage> {
                           ),
                         ],
                         selected: {_eventType},
+                        showSelectedIcon: false,
                         onSelectionChanged: (Set<String> newSelection) {
                           setState(() {
                             _eventType = newSelection.first;

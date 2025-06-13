@@ -78,36 +78,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Widget _buildCompactSportTab(String sport, IconData icon) {
-    final isSelected = _selectedSport == sport;
-    final color = sport == 'run' ? Colors.orange[600] : Colors.green[600];
-    
-    return GestureDetector(
-      onTap: () => _selectSport(sport),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ]
-              : null,
-        ),
-        child: Icon(
-          icon,
-          size: 16,
-          color: isSelected ? color : Colors.grey[500],
-        ),
-      ),
-    );
-  }
 
   Widget _buildCompactContextTab(String key, String label) {
     final isSelected = _selectedFilter == key;
@@ -353,6 +323,28 @@ class _HomePageState extends State<HomePage> {
     return startTime;
   }
 
+  String _formatDistance(dynamic distance) {
+    if (distance == null) return '';
+    
+    // Convert to double if it's not already
+    double? distanceValue;
+    if (distance is String) {
+      distanceValue = double.tryParse(distance);
+    } else if (distance is num) {
+      distanceValue = distance.toDouble();
+    }
+    
+    if (distanceValue == null) return distance.toString();
+    
+    // If it's a whole number, show without decimals
+    if (distanceValue == distanceValue.truncate()) {
+      return distanceValue.truncate().toString();
+    } else {
+      // Otherwise show with decimals, but remove trailing zeros
+      return distanceValue.toString().replaceAll(RegExp(r'\.?0*$'), '');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -440,24 +432,82 @@ class _HomePageState extends State<HomePage> {
                           children: [
                             // Sport Selection Row
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[300],
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        _buildCompactSportTab('run', Icons.directions_run),
-                                        _buildCompactSportTab('ride', Icons.directions_bike),
-                                      ],
+                              padding: const EdgeInsets.symmetric(horizontal: 32),
+                              child: Center(
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: SegmentedButton<String>(
+                                    segments: [
+                                      ButtonSegment<String>(
+                                        value: 'run',
+                                        label: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.directions_run,
+                                              size: 18,
+                                              color: _selectedSport == 'run'
+                                                  ? Colors.white
+                                                  : Colors.grey[700],
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Run',
+                                              style: TextStyle(
+                                                color: _selectedSport == 'run'
+                                                    ? Colors.white
+                                                    : Colors.black,
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      ButtonSegment<String>(
+                                        value: 'ride',
+                                        label: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.directions_bike,
+                                              size: 18,
+                                              color: _selectedSport == 'ride'
+                                                  ? Colors.white
+                                                  : Colors.grey[700],
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Ride',
+                                              style: TextStyle(
+                                                color: _selectedSport == 'ride'
+                                                    ? Colors.white
+                                                    : Colors.black,
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                    selected: {_selectedSport},
+                                    showSelectedIcon: false,
+                                    onSelectionChanged: (Set<String> newSelection) {
+                                      _selectSport(newSelection.first);
+                                    },
+                                    style: ButtonStyle(
+                                      backgroundColor: WidgetStateProperty.resolveWith<Color>((
+                                        Set<WidgetState> states,
+                                      ) {
+                                        if (states.contains(WidgetState.selected)) {
+                                          return Colors.black;
+                                        }
+                                        return Colors.grey[200]!;
+                                      }),
                                     ),
                                   ),
-                                ],
+                                ),
                               ),
                             ),
                             const SizedBox(height: 12),
@@ -884,7 +934,7 @@ class _HomePageState extends State<HomePage> {
                                         ),
                                         const SizedBox(width: 4),
                                         Text(
-                                          '${e['distance']} ${e['distanceUnit']}',
+                                          '${_formatDistance(e['distance'])} ${e['distanceUnit']}',
                                           style: const TextStyle(
                                             color: Colors.white,
                                             fontSize: 15,
@@ -1063,19 +1113,12 @@ class _NotificationsModalState extends State<NotificationsModal> {
           // Header
           Container(
             padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: const BorderRadius.only(
+              borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(24),
                 topRight: Radius.circular(24),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
             ),
             child: Column(
               children: [
@@ -1208,15 +1251,30 @@ class _NotificationsModalState extends State<NotificationsModal> {
     final createdAt = notification['timestamp'] as Timestamp?;
     final data = notification['data'] as Map<String, dynamic>? ?? {};
     
-    // Get inviter info for event invitations
-    String? inviterPhotoUrl;
-    String? inviterName;
+    // Get user info for different notification types
+    String? userPhotoUrl;
+    String? userName;
     String? eventName;
     String? eventType;
     
     if (type == 'event_invitation') {
-      inviterPhotoUrl = data['fromUserPhotoUrl'];
-      inviterName = data['fromUserName'];
+      userPhotoUrl = data['fromUserPhotoUrl'];
+      userName = data['fromUserName'];
+      eventName = data['eventName'];
+      eventType = data['eventType'];
+    } else if (type == 'new_participant' || type == 'participant_left') {
+      userPhotoUrl = data['participantPhotoUrl'];
+      userName = data['participantName'];
+      eventName = data['eventName'];
+      eventType = data['eventType'];
+    } else if (type == 'event_message') {
+      userPhotoUrl = data['posterPhotoUrl'];
+      userName = data['posterName'];
+      eventName = data['eventName'];
+      eventType = data['eventType'];
+    } else if (type == 'event_update') {
+      userPhotoUrl = data['hostPhotoUrl'];
+      userName = data['hostName'];
       eventName = data['eventName'];
       eventType = data['eventType'];
     }
@@ -1246,7 +1304,7 @@ class _NotificationsModalState extends State<NotificationsModal> {
           child: Row(
             children: [
               // Avatar or icon
-              if (type == 'event_invitation' && inviterPhotoUrl != null && inviterPhotoUrl.isNotEmpty)
+              if ((type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update') && userPhotoUrl != null && userPhotoUrl.isNotEmpty)
                 Container(
                   width: 48,
                   height: 48,
@@ -1260,12 +1318,12 @@ class _NotificationsModalState extends State<NotificationsModal> {
                   child: CircleAvatar(
                     radius: 22,
                     backgroundColor: Colors.grey[300],
-                    backgroundImage: NetworkImage(inviterPhotoUrl),
+                    backgroundImage: NetworkImage(userPhotoUrl),
                     onBackgroundImageError: (_, __) {},
                     child: null,
                   ),
                 )
-              else if (type == 'event_invitation')
+              else if (type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update')
                 Container(
                   width: 48,
                   height: 48,
@@ -1293,8 +1351,8 @@ class _NotificationsModalState extends State<NotificationsModal> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Title with enhanced styling for event invitations
-                    if (type == 'event_invitation' && inviterName != null && eventName != null)
+                    // Title with enhanced styling for event invitations and new participants
+                    if (type == 'event_invitation' && userName != null && eventName != null)
                       RichText(
                         text: TextSpan(
                           style: TextStyle(
@@ -1304,9 +1362,117 @@ class _NotificationsModalState extends State<NotificationsModal> {
                             height: 1.3,
                           ),
                           children: [
-                            TextSpan(text: inviterName),
+                            TextSpan(text: userName),
                             TextSpan(
                               text: ' invited you to ',
+                              style: TextStyle(
+                                fontWeight: FontWeight.normal,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            TextSpan(
+                              text: eventName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (type == 'new_participant' && userName != null && eventName != null)
+                      RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: isRead ? FontWeight.w500 : FontWeight.w600,
+                            color: Colors.black87,
+                            height: 1.3,
+                          ),
+                          children: [
+                            TextSpan(text: userName),
+                            TextSpan(
+                              text: ' joined your event ',
+                              style: TextStyle(
+                                fontWeight: FontWeight.normal,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            TextSpan(
+                              text: eventName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (type == 'participant_left' && userName != null && eventName != null)
+                      RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: isRead ? FontWeight.w500 : FontWeight.w600,
+                            color: Colors.black87,
+                            height: 1.3,
+                          ),
+                          children: [
+                            TextSpan(text: userName),
+                            TextSpan(
+                              text: ' left your event ',
+                              style: TextStyle(
+                                fontWeight: FontWeight.normal,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            TextSpan(
+                              text: eventName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (type == 'event_message' && userName != null && eventName != null)
+                      RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: isRead ? FontWeight.w500 : FontWeight.w600,
+                            color: Colors.black87,
+                            height: 1.3,
+                          ),
+                          children: [
+                            TextSpan(text: userName),
+                            TextSpan(
+                              text: ' posted a message in ',
+                              style: TextStyle(
+                                fontWeight: FontWeight.normal,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            TextSpan(
+                              text: eventName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (type == 'event_update' && userName != null && eventName != null)
+                      RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: isRead ? FontWeight.w500 : FontWeight.w600,
+                            color: Colors.black87,
+                            height: 1.3,
+                          ),
+                          children: [
+                            TextSpan(text: userName),
+                            TextSpan(
+                              text: ' updated ',
                               style: TextStyle(
                                 fontWeight: FontWeight.normal,
                                 color: Colors.grey[700],
@@ -1334,8 +1500,8 @@ class _NotificationsModalState extends State<NotificationsModal> {
                     
                     const SizedBox(height: 4),
                     
-                    // Event type badge for invitations
-                    if (type == 'event_invitation' && eventType != null) ...[
+                    // Event type badge for invitations and participant changes
+                    if ((type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update') && eventType != null) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
@@ -1405,6 +1571,10 @@ class _NotificationsModalState extends State<NotificationsModal> {
       case 'new_participant':
         iconData = Icons.person_add;
         color = Colors.green[600]!;
+        break;
+      case 'participant_left':
+        iconData = Icons.person_remove;
+        color = Colors.orange[600]!;
         break;
       case 'friend_request':
         iconData = Icons.person_add;
@@ -1507,7 +1677,7 @@ class _NotificationsModalState extends State<NotificationsModal> {
       return;
     }
     
-    if (['event_invitation', 'event_reminder', 'event_update', 'new_participant'].contains(type)) {
+    if (['event_invitation', 'event_reminder', 'event_update', 'new_participant', 'participant_left', 'event_message'].contains(type)) {
       print('DEBUG: Processing event notification, closing modal...');
       
       try {
@@ -2127,6 +2297,27 @@ class _NotificationsModalState extends State<NotificationsModal> {
         'participantsData': currentParticipantsData,
         'invitedUsers': currentInvitedUsers,
       });
+      
+      // Create notification for the event organizer
+      final creatorId = eventData['creatorId'] as String?;
+      if (creatorId != null && creatorId != user.uid) {
+        await FirebaseFirestore.instance.collection('notifications').add({
+          'userId': creatorId,
+          'type': 'new_participant',
+          'title': 'New Participant',
+          'message': '$fullName joined your event "${eventData['eventName'] ?? 'event'}"',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+          'data': {
+            'eventId': eventId,
+            'eventName': eventData['eventName'],
+            'eventType': eventData['eventType'],
+            'participantName': fullName,
+            'participantId': user.uid,
+            'participantPhotoUrl': userData['photoUrl'],
+          },
+        });
+      }
       
       // Delete the invitation notification
       await FirebaseFirestore.instance

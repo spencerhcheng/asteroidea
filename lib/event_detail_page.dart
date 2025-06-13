@@ -9,6 +9,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path/path.dart' as path;
 import 'package:glowy_borders/glowy_borders.dart';
+import 'create_event_page.dart';
 
 class EventDetailPage extends StatefulWidget {
   final String eventId;
@@ -224,6 +225,52 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         'invitedUsers': currentInvitedUsers,
       });
 
+      // Create notification for the event organizer
+      final creatorId = widget.eventData['creatorId'] as String?;
+      if (creatorId != null && creatorId != user.uid) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final userData = userDoc.data() ?? {};
+        final fullName = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
+        
+        if (!isCurrentlyParticipant) {
+          // Someone joined the event
+          await FirebaseFirestore.instance.collection('notifications').add({
+            'userId': creatorId,
+            'type': 'new_participant',
+            'title': 'New Participant',
+            'message': '$fullName joined your event "${widget.eventData['eventName'] ?? 'event'}"',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+            'data': {
+              'eventId': widget.eventId,
+              'eventName': widget.eventData['eventName'],
+              'eventType': widget.eventData['eventType'],
+              'participantName': fullName,
+              'participantId': user.uid,
+              'participantPhotoUrl': userData['photoUrl'],
+            },
+          });
+        } else {
+          // Someone left the event
+          await FirebaseFirestore.instance.collection('notifications').add({
+            'userId': creatorId,
+            'type': 'participant_left',
+            'title': 'Participant Left',
+            'message': '$fullName left your event "${widget.eventData['eventName'] ?? 'event'}"',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+            'data': {
+              'eventId': widget.eventId,
+              'eventName': widget.eventData['eventName'],
+              'eventType': widget.eventData['eventType'],
+              'participantName': fullName,
+              'participantId': user.uid,
+              'participantPhotoUrl': userData['photoUrl'],
+            },
+          });
+        }
+      }
+
     } catch (e) {
       // Revert local state on error
       setState(() {
@@ -279,6 +326,40 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
           .doc(widget.eventId)
           .collection('messages')
           .add(messageData);
+
+      // Create notifications for all participants and host (except the poster)
+      final participants = List<String>.from(widget.eventData['participants'] ?? []);
+      final creatorId = widget.eventData['creatorId'] as String?;
+      final userFullName = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
+      
+      // Collect all users who should be notified (participants + creator, excluding poster)
+      Set<String> usersToNotify = {};
+      usersToNotify.addAll(participants);
+      if (creatorId != null) {
+        usersToNotify.add(creatorId);
+      }
+      usersToNotify.remove(user.uid); // Don't notify the person who posted
+      
+      // Create notifications for each user
+      for (final userId in usersToNotify) {
+        await FirebaseFirestore.instance.collection('notifications').add({
+          'userId': userId,
+          'type': 'event_message',
+          'title': 'New Message',
+          'message': '$userFullName posted a message in "${widget.eventData['eventName'] ?? 'event'}"',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+          'data': {
+            'eventId': widget.eventId,
+            'eventName': widget.eventData['eventName'],
+            'eventType': widget.eventData['eventType'],
+            'posterName': userFullName,
+            'posterId': user.uid,
+            'posterPhotoUrl': userData['photoUrl'],
+            'messageType': messageData['type'],
+          },
+        });
+      }
 
       _messageController.clear();
       String successMessage = 'Message posted!';
@@ -637,8 +718,42 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         if (isOwnEvent)
           IconButton(
             icon: const Icon(Icons.edit, color: Colors.black),
-            onPressed: () {
-              // Navigate to edit event page
+            onPressed: () async {
+              final result = await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => CreateEventPage(
+                    isEdit: true,
+                    eventId: widget.eventId,
+                    initialEventData: widget.eventData,
+                  ),
+                ),
+              );
+              
+              // If the event was updated, refresh the page
+              if (result == true && mounted) {
+                // Refresh the event data
+                final updatedDoc = await FirebaseFirestore.instance
+                    .collection('events')
+                    .doc(widget.eventId)
+                    .get();
+                
+                if (updatedDoc.exists && mounted) {
+                  // Update the widget's event data
+                  setState(() {
+                    // Create a new event detail page with updated data
+                  });
+                  
+                  // Pop and push the updated page
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder: (context) => EventDetailPage(
+                        eventId: widget.eventId,
+                        eventData: updatedDoc.data()!,
+                      ),
+                    ),
+                  );
+                }
+              }
             },
           ),
         IconButton(
