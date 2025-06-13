@@ -2832,7 +2832,6 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
       }
       return null;
     } catch (e) {
-      print('Error compressing image: $e');
       return imageFile; // Return original if compression fails
     }
   }

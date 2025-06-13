@@ -263,7 +263,9 @@ class _ProfilePageState extends State<ProfilePage> {
     final friends = userData?['friends'] as List<dynamic>? ?? [];
     final friendRequests = userData?['friendRequests'] as List<dynamic>? ?? [];
     
+    print('DEBUG: Building friends list - Friends: ${friends.length}, Friend Requests: ${friendRequests.length}');
     if (friendRequests.isNotEmpty) {
+      print('DEBUG: Friend requests: $friendRequests');
     }
     
     if (friends.isEmpty && friendRequests.isEmpty) {
@@ -447,9 +449,11 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _acceptFriendRequest(Map<String, dynamic> request) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
+      print('ERROR: No authenticated user found for accepting friend request');
       return;
     }
 
+    print('DEBUG: Accepting friend request from ${request['uid']}');
 
     try {
       final batch = FirebaseFirestore.instance.batch();
@@ -465,6 +469,7 @@ class _ProfilePageState extends State<ProfilePage> {
       }
       
       final currentUserData = currentUserDoc.data() ?? {};
+      print('DEBUG: Current user data keys: ${currentUserData.keys.toList()}');
       
       // Get phone numbers
       final currentUserPhone = currentUserData['phoneNumber']?.toString();
@@ -480,11 +485,13 @@ class _ProfilePageState extends State<ProfilePage> {
       // Add optional fields if present
       if (requestPhone?.isNotEmpty == true) {
         newFriend['phoneNumber'] = requestPhone;
+        print('DEBUG: Added phone to new friend: $requestPhone');
       }
       
       final requestPhotoUrl = request['photoUrl']?.toString();
       if (requestPhotoUrl?.isNotEmpty == true) {
         newFriend['photoUrl'] = requestPhotoUrl;
+        print('DEBUG: Added photo URL to new friend');
       }
       
       final currentUserAsFriend = <String, dynamic>{
@@ -496,13 +503,17 @@ class _ProfilePageState extends State<ProfilePage> {
       // Add optional fields if present
       if (currentUserPhone?.isNotEmpty == true) {
         currentUserAsFriend['phoneNumber'] = currentUserPhone;
+        print('DEBUG: Added phone to current user friend object: $currentUserPhone');
       }
       
       final currentPhotoUrl = currentUserData['photoUrl']?.toString();
       if (currentPhotoUrl?.isNotEmpty == true) {
         currentUserAsFriend['photoUrl'] = currentPhotoUrl;
+        print('DEBUG: Added photo URL to current user friend object');
       }
       
+      print('DEBUG: New friend object: $newFriend');
+      print('DEBUG: Current user as friend object: $currentUserAsFriend');
       
       // Verify the requester user still exists
       final requesterDoc = await FirebaseFirestore.instance
@@ -525,6 +536,7 @@ class _ProfilePageState extends State<ProfilePage> {
         'friends': FieldValue.arrayUnion([currentUserAsFriend]),
       }, SetOptions(merge: true));
       
+      print('DEBUG: Committing batch operation');
       await batch.commit();
       
       // Create notification for the person who sent the friend request
@@ -546,8 +558,12 @@ class _ProfilePageState extends State<ProfilePage> {
         _refreshKey++;
       });
       
+      print('DEBUG: Friend request accepted successfully');
+      print('DEBUG: Created notification for friend request acceptance');
       _showSnackBar('Friend request accepted!');
     } catch (e, stackTrace) {
+      print('ERROR: Failed to accept friend request: $e');
+      print('STACK TRACE: $stackTrace');
       
       String errorMessage = 'Failed to accept friend request';
       if (e.toString().contains('permission-denied')) {
@@ -616,7 +632,10 @@ class _ProfilePageState extends State<ProfilePage> {
           );
         }
         final data = snapshot.data?.data();
+        print('DEBUG: Profile StreamBuilder received data for user ${user.uid}');
+        print('DEBUG: User data keys: ${data?.keys.toList()}');
         if (data?['friendRequests'] != null) {
+          print('DEBUG: Friend requests in data: ${data!['friendRequests']}');
         }
         final firstName = data?['firstName'] ?? 'User';
         final lastName = data?['lastName'] ?? '';
@@ -1325,6 +1344,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
     if (user == null) return;
 
     try {
+      print('DEBUG: Starting account deletion for user ${user.uid}');
       
       // 1. Get user data before deletion for cleanup
       final userDoc = await FirebaseFirestore.instance
@@ -1335,6 +1355,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       final userName = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
       
       // 2. Remove user from all events they joined (as participant)
+      print('DEBUG: Removing user from joined events');
       final joinedEvents = await FirebaseFirestore.instance
           .collection('events')
           .where('participants', arrayContains: user.uid)
@@ -1358,6 +1379,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       await batch1.commit();
       
       // 3. Remove user from friends lists of other users
+      print('DEBUG: Removing user from friends lists');
       final allUsers = await FirebaseFirestore.instance
           .collection('users')
           .get();
@@ -1389,6 +1411,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       await batch2.commit();
       
       // 4. Delete user's created events
+      print('DEBUG: Deleting user created events');
       final userEvents = await FirebaseFirestore.instance
           .collection('events')
           .where('creatorId', isEqualTo: user.uid)
@@ -1407,6 +1430,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       await batch3.commit();
       
       // 5. Delete user's message photos from Storage
+      print('DEBUG: Deleting user message photos');
       try {
         final messagePhotosRef = FirebaseStorage.instance
             .ref()
@@ -1414,9 +1438,11 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
         // Note: We can't easily delete all user's message photos without knowing specific paths
         // In production, you might want to track user's uploaded files
       } catch (e) {
+        print('Note: Could not delete all message photos: $e');
       }
 
       // 6. Delete user's profile photo
+      print('DEBUG: Deleting profile photo');
       try {
         await FirebaseStorage.instance
             .ref()
@@ -1425,9 +1451,11 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
             .delete();
       } catch (e) {
         // Photo might not exist, ignore error
+        print('Note: Profile photo not found or already deleted');
       }
 
       // 7. Delete all notifications related to this user
+      print('DEBUG: Deleting user notifications');
       final userNotifications = await FirebaseFirestore.instance
           .collection('notifications')
           .where('userId', isEqualTo: user.uid)
@@ -1450,14 +1478,17 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       await notificationsBatch.commit();
 
       // 8. Delete user document from Firestore
+      print('DEBUG: Deleting user document');
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .delete();
 
       // 9. Delete the Firebase Auth user
+      print('DEBUG: Deleting Firebase Auth user');
       await user.delete();
       
+      print('DEBUG: Account deletion completed successfully');
 
       // Navigate to login page
       if (!mounted) return;
@@ -2240,25 +2271,30 @@ class _AddFriendModalState extends State<AddFriendModal> {
         _isSearching = false;
         _searchResults = [];
       });
+      print('Error searching users: $e');
     }
   }
   
   Future<void> _sendFriendRequest(Map<String, dynamic> targetUser) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
+      print('ERROR: No authenticated user found');
       return;
     }
     
     final targetUserId = targetUser['uid'];
     if (targetUserId == null || targetUserId.isEmpty) {
+      print('ERROR: Target user ID is null or empty');
       _showSnackBar('Invalid user selected', backgroundColor: Colors.red);
       return;
     }
     
     if (_pendingRequests.contains(targetUserId)) {
+      print('DEBUG: Friend request already pending for user: $targetUserId');
       return;
     }
 
+    print('DEBUG: Starting friend request from ${user.uid} to $targetUserId');
 
     try {
       setState(() {
@@ -2266,6 +2302,7 @@ class _AddFriendModalState extends State<AddFriendModal> {
       });
       
       // Get current user data with comprehensive error checking
+      print('DEBUG: Fetching current user data');
       final currentUserDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -2276,6 +2313,7 @@ class _AddFriendModalState extends State<AddFriendModal> {
       }
       
       final currentUserData = currentUserDoc.data() ?? {};
+      print('DEBUG: Current user data: ${currentUserData.keys.toList()}');
       
       // Get user data with standardized schema
       final phoneNumber = currentUserData['phoneNumber']?.toString();
@@ -2291,12 +2329,15 @@ class _AddFriendModalState extends State<AddFriendModal> {
       // Add optional fields if present
       if (phoneNumber?.isNotEmpty == true) {
         currentUserRequest['phoneNumber'] = phoneNumber;
+        print('DEBUG: Added phone number to request: $phoneNumber');
       }
       
       if (photoUrl?.isNotEmpty == true) {
         currentUserRequest['photoUrl'] = photoUrl;
+        print('DEBUG: Added photo URL to request');
       }
       
+      print('DEBUG: Friend request object: $currentUserRequest');
       
       // Verify target user exists before sending request
       final targetUserDoc = await FirebaseFirestore.instance
@@ -2308,6 +2349,7 @@ class _AddFriendModalState extends State<AddFriendModal> {
         throw Exception('Target user document does not exist');
       }
       
+      print('DEBUG: Target user verified, sending friend request');
       
       // Add friend request to target user with atomic operation
       await FirebaseFirestore.instance
@@ -2317,6 +2359,7 @@ class _AddFriendModalState extends State<AddFriendModal> {
         'friendRequests': FieldValue.arrayUnion([currentUserRequest]),
       }, SetOptions(merge: true));
 
+      print('DEBUG: Friend request successfully sent to $targetUserId');
       
       // Create notification for the friend request
       await FirebaseFirestore.instance.collection('notifications').add({
@@ -2339,9 +2382,13 @@ class _AddFriendModalState extends State<AddFriendModal> {
           .doc(targetUserId)
           .get();
       final friendRequests = verifyDoc.data()?['friendRequests'] as List<dynamic>? ?? [];
+      print('DEBUG: Target user now has ${friendRequests.length} friend requests');
+      print('DEBUG: Created notification for friend request');
       
       _showSnackBar('Friend request sent to ${targetUser['name']}');
     } catch (e, stackTrace) {
+      print('ERROR: Friend request failed: $e');
+      print('STACK TRACE: $stackTrace');
       
       // More specific error messages based on error type
       String errorMessage = 'Failed to send friend request';

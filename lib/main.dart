@@ -232,8 +232,6 @@ class AuthWrapper extends StatelessWidget {
 
   Future<void> _createMissingUserDocument(User user) async {
     try {
-      print('DEBUG: Creating missing user document for ${user.uid}');
-      print('DEBUG: User phone: ${user.phoneNumber}');
       
       // Create user document if it doesn't exist
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
@@ -246,9 +244,7 @@ class AuthWrapper extends StatelessWidget {
         'friendRequests': [],
       });
       
-      print('DEBUG: User document created successfully');
     } catch (e) {
-      print('Error creating user document: $e');
       // If document creation fails, we'll still proceed to onboarding
       // The onboarding flow should handle document creation as well
     }
@@ -270,12 +266,9 @@ class AuthWrapper extends StatelessWidget {
 
         final user = snapshot.data;
         if (user == null) {
-          print('DEBUG: No authenticated user found');
           return const LandingPage();
         }
 
-        print('DEBUG: Authenticated user found: ${user.uid}');
-        print('DEBUG: User phone: ${user.phoneNumber}');
         
         // User is authenticated, check onboarding status
         return FutureBuilder<DocumentSnapshot>(
@@ -294,7 +287,6 @@ class AuthWrapper extends StatelessWidget {
             }
 
             if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
-              print('DEBUG: User document does not exist, creating it');
               // User document doesn't exist, create it and go to onboarding
               return FutureBuilder<void>(
                 future: _createMissingUserDocument(user),
@@ -315,14 +307,9 @@ class AuthWrapper extends StatelessWidget {
             final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
             final onboardingComplete = userData?['onboardingComplete'] == true;
 
-            print('DEBUG: User document exists, onboarding complete: $onboardingComplete');
-
             if (!onboardingComplete) {
-              print('DEBUG: Onboarding not complete, going to onboarding page');
               return const OnboardingPage();
             }
-
-            print('DEBUG: Onboarding complete, going to main navigation');
             return const MainNavigation();
           },
         );
