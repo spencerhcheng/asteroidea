@@ -1303,46 +1303,59 @@ class _NotificationsModalState extends State<NotificationsModal> {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              // Avatar or icon
-              if ((type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update') && userPhotoUrl != null && userPhotoUrl.isNotEmpty)
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: eventType == 'run' ? Colors.orange[300]! : Colors.green[300]!,
-                      width: 2,
-                    ),
+              // Avatar or icon with notification type badge
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Main avatar/icon
+                  if ((type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update') && userPhotoUrl != null && userPhotoUrl.isNotEmpty)
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: eventType == 'run' ? Colors.orange[300]! : Colors.green[300]!,
+                          width: 2,
+                        ),
+                      ),
+                      child: CircleAvatar(
+                        radius: 22,
+                        backgroundColor: Colors.grey[300],
+                        backgroundImage: NetworkImage(userPhotoUrl),
+                        onBackgroundImageError: (_, __) {},
+                        child: null,
+                      ),
+                    )
+                  else if (type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update')
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: eventType == 'run' ? Colors.orange[100] : Colors.green[100],
+                        border: Border.all(
+                          color: eventType == 'run' ? Colors.orange[300]! : Colors.green[300]!,
+                          width: 2,
+                        ),
+                      ),
+                      child: Icon(
+                        eventType == 'run' ? Icons.directions_run : Icons.directions_bike,
+                        color: eventType == 'run' ? Colors.orange[700] : Colors.green[700],
+                        size: 24,
+                      ),
+                    )
+                  else
+                    _getNotificationIcon(type),
+                  
+                  // Notification type badge overlay
+                  Positioned(
+                    bottom: -4,
+                    right: -4,
+                    child: _getNotificationTypeBadge(type),
                   ),
-                  child: CircleAvatar(
-                    radius: 22,
-                    backgroundColor: Colors.grey[300],
-                    backgroundImage: NetworkImage(userPhotoUrl),
-                    onBackgroundImageError: (_, __) {},
-                    child: null,
-                  ),
-                )
-              else if (type == 'event_invitation' || type == 'new_participant' || type == 'participant_left' || type == 'event_message' || type == 'event_update')
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: eventType == 'run' ? Colors.orange[100] : Colors.green[100],
-                    border: Border.all(
-                      color: eventType == 'run' ? Colors.orange[300]! : Colors.green[300]!,
-                      width: 2,
-                    ),
-                  ),
-                  child: Icon(
-                    eventType == 'run' ? Icons.directions_run : Icons.directions_bike,
-                    color: eventType == 'run' ? Colors.orange[700] : Colors.green[700],
-                    size: 24,
-                  ),
-                )
-              else
-                _getNotificationIcon(type),
+                ],
+              ),
               
               const SizedBox(width: 16),
               
@@ -1600,6 +1613,90 @@ class _NotificationsModalState extends State<NotificationsModal> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(iconData, color: color, size: 20),
+    );
+  }
+
+  Widget _getNotificationTypeBadge(String type) {
+    IconData iconData;
+    Color backgroundColor;
+    Color iconColor;
+    
+    switch (type) {
+      case 'event_invitation':
+        iconData = Icons.mail;
+        backgroundColor = Colors.blue[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'new_participant':
+        iconData = Icons.person_add;
+        backgroundColor = Colors.green[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'participant_left':
+        iconData = Icons.person_remove;
+        backgroundColor = Colors.orange[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'event_message':
+        iconData = Icons.chat_bubble;
+        backgroundColor = Colors.purple[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'event_update':
+        iconData = Icons.edit;
+        backgroundColor = Colors.indigo[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'event_reminder':
+        iconData = Icons.access_time;
+        backgroundColor = Colors.amber[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'friend_request':
+        iconData = Icons.group_add;
+        backgroundColor = Colors.teal[600]!;
+        iconColor = Colors.white;
+        break;
+      case 'friend_accepted':
+        iconData = Icons.check;
+        backgroundColor = Colors.green[600]!;
+        iconColor = Colors.white;
+        break;
+      default:
+        iconData = Icons.notifications;
+        backgroundColor = Colors.grey[600]!;
+        iconColor = Colors.white;
+    }
+    
+    return Container(
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Colors.white,
+          width: 2.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: backgroundColor.withValues(alpha: 0.4),
+            blurRadius: 8,
+            spreadRadius: 1,
+            offset: const Offset(0, 2),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Icon(
+        iconData,
+        color: iconColor,
+        size: 12,
+      ),
     );
   }
 

@@ -1128,6 +1128,36 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                   onPressed: () => _showInviteModal(),
                   backgroundColor: Colors.black,
                   child: const Icon(Icons.person_add, color: Colors.white, size: 16),
+                )
+              else if (!currentParticipants.contains(FirebaseAuth.instance.currentUser?.uid))
+                GestureDetector(
+                  onTap: _toggleParticipation,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.add,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 4),
+                        const Text(
+                          'Join',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -1881,14 +1911,36 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
 
     if (isOwnEvent) {
       // Show invite button for event owners
-      return ScaleTransition(
-        scale: _fabAnimation,
-        child: FloatingActionButton.extended(
+      if (!_shimmerInitialized) {
+        // Fallback to regular black button if shimmer controller isn't ready
+        return FloatingActionButton.extended(
           onPressed: () => _showInviteModal(),
           backgroundColor: Colors.black,
           icon: const Icon(Icons.person_add, color: Colors.white),
           label: const Text(
-            'Invite People',
+            'Invite',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+        );
+      }
+      
+      return AnimatedGradientBorder(
+        borderSize: 2,
+        glowSize: 3,
+        gradientColors: [
+          Colors.blue[300]!,
+          Colors.purple[300]!,
+          Colors.blue[300]!,
+        ],
+        borderRadius: BorderRadius.circular(24),
+        animationProgress: null, // Use built-in indefinite animation
+        child: FloatingActionButton.extended(
+          onPressed: () => _showInviteModal(),
+          backgroundColor: Colors.black,
+          elevation: 0,
+          icon: const Icon(Icons.person_add, color: Colors.white),
+          label: const Text(
+            'Invite',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
           ),
         ),
@@ -2004,7 +2056,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Invite People',
+                    'Invite',
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
