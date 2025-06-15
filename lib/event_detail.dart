@@ -4,12 +4,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:glowy_borders/glowy_borders.dart';
-import 'create_event_page.dart';
+import 'create_event.dart';
 
 class EventDetailPage extends StatefulWidget {
   final String eventId;
@@ -27,7 +29,9 @@ class EventDetailPage extends StatefulWidget {
 
 class _EventDetailPageState extends State<EventDetailPage> with TickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
   bool _isPosting = false;
+  Map<String, dynamic>? _currentEventData;
   bool _showAllMessages = false;
   List<Map<String, dynamic>> _searchResults = [];
   final TextEditingController _searchController = TextEditingController();
@@ -41,6 +45,80 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
   List<String>? _currentParticipants;
   List<Map<String, dynamic>>? _currentParticipantsData;
   List<String>? _currentInvitedUsers;
+  
+  // User data cache to avoid repeated Firebase fetches
+  final Map<String, Map<String, dynamic>> _userCache = {};
+  
+  // Method to get user data with caching
+  Future<Map<String, dynamic>?> _getCachedUserData(String userId) async {
+    if (_userCache.containsKey(userId)) {
+      return _userCache[userId];
+    }
+    
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
+      if (doc.exists) {
+        final userData = doc.data() as Map<String, dynamic>;
+        _userCache[userId] = userData;
+        return userData;
+      }
+    } catch (e) {
+      // Handle error silently and return null
+    }
+    
+    return null;
+  }
+  
+  // Get user data synchronously from cache (returns null if not cached)
+  Map<String, dynamic>? _getUserDataFromCache(String userId) {
+    return _userCache[userId];
+  }
+  
+  // Pre-cache user data for all participants and invited users
+  Future<void> _preCacheUserData() async {
+    final Set<String> userIds = {};
+    
+    // Add participants
+    if (_currentParticipantsData != null) {
+      for (final participant in _currentParticipantsData!) {
+        final uid = participant['uid'] as String?;
+        if (uid != null) {
+          userIds.add(uid);
+          // Store participant data in cache
+          _userCache[uid] = participant;
+        }
+      }
+    }
+    
+    // Add invited users
+    if (_currentInvitedUsers != null) {
+      userIds.addAll(_currentInvitedUsers!);
+    }
+    
+    // Add message authors (from recent messages)
+    final messagesSnapshot = await FirebaseFirestore.instance
+        .collection('events')
+        .doc(widget.eventId)
+        .collection('messages')
+        .limit(20)
+        .get();
+    
+    for (final messageDoc in messagesSnapshot.docs) {
+      final messageData = messageDoc.data();
+      final userId = messageData['userId'] as String?;
+      if (userId != null) userIds.add(userId);
+    }
+    
+    // Fetch all uncached user data in parallel
+    final futures = userIds
+        .where((id) => !_userCache.containsKey(id))
+        .map((id) => _getCachedUserData(id));
+        
+    await Future.wait(futures);
+  }
+  
+  // Getter to return current event data, preferring StreamBuilder data over initial widget data
+  Map<String, dynamic> get eventData => _currentEventData ?? widget.eventData;
 
   // Getters with fallbacks to widget data
   List<String> get currentParticipants => 
@@ -76,11 +154,15 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
     );
     _shimmerController.repeat();
     _shimmerInitialized = true;
+    
+    // Pre-cache user data for better performance
+    _preCacheUserData();
   }
 
   @override
   void dispose() {
     _messageController.dispose();
+    _messageFocusNode.dispose();
     _searchController.dispose();
     _fabController.dispose();
     if (_shimmerInitialized) {
@@ -388,6 +470,264 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
     }
   }
 
+  // Handle media insertion from keyboard (GIFs, images, stickers)
+  Future<void> _handleKeyboardMediaInsertion(KeyboardInsertedContent data) async {
+    if (data.hasData) {
+      try {
+        final bytes = data.data;
+        final mimeType = data.mimeType;
+        
+        // Check if we have valid byte data
+        if (bytes == null) {
+          _showSnackBar('No media data received', backgroundColor: Colors.red[600]);
+          return;
+        }
+        
+        // Determine if it's a GIF or regular image
+        if (mimeType?.contains('gif') == true) {
+          // Handle as GIF
+          await _uploadAndPostGif(bytes);
+        } else if (mimeType?.startsWith('image/') == true) {
+          // Handle as regular image
+          await _uploadAndPostImage(bytes);
+        }
+      } catch (e) {
+        _showSnackBar('Failed to process media from keyboard', backgroundColor: Colors.red[600]);
+      }
+    }
+  }
+
+  // Upload and post GIF from keyboard
+  Future<void> _uploadAndPostGif(Uint8List bytes) async {
+    // Show immediate feedback
+    setState(() {
+      _isPosting = true;
+    });
+
+    try {
+      // Create temporary file for the GIF
+      final tempDir = await getTemporaryDirectory();
+      final fileName = 'keyboard_gif_${DateTime.now().millisecondsSinceEpoch}.gif';
+      final tempFile = File('${tempDir.path}/$fileName');
+      await tempFile.writeAsBytes(bytes);
+
+      // Create optimistic message first (local only)
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final userData = userDoc.data() ?? {};
+        
+        // Create temporary local file URL for immediate display
+        final localGifUrl = tempFile.path;
+        
+        // Post message immediately with local file path for instant UI update
+        final messageData = {
+          'userId': user.uid,
+          'userName': '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim(),
+          'photoUrl': userData['photoUrl'],
+          'timestamp': FieldValue.serverTimestamp(),
+          'reactions': {},
+          'gifUrl': localGifUrl, // Temporary local path
+          'type': 'gif',
+          'uploading': true, // Flag to indicate upload in progress
+        };
+
+        // Add to Firestore immediately
+        final docRef = await FirebaseFirestore.instance
+            .collection('events')
+            .doc(widget.eventId)
+            .collection('messages')
+            .add(messageData);
+
+        // Upload in background
+        _uploadGifInBackground(tempFile, docRef.id, userData);
+      }
+
+      setState(() {
+        _isPosting = false;
+      });
+      
+      _showSnackBar('GIF posted! 🎬');
+    } catch (e) {
+      setState(() {
+        _isPosting = false;
+      });
+      _showSnackBar('Failed to upload GIF', backgroundColor: Colors.red[600]);
+    }
+  }
+
+  // Background upload for GIF
+  Future<void> _uploadGifInBackground(File tempFile, String messageId, Map<String, dynamic> userData) async {
+    try {
+      // Upload to Firebase Storage
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('chat_gifs')
+          .child('${widget.eventId}_${DateTime.now().millisecondsSinceEpoch}.gif');
+
+      final uploadTask = storageRef.putFile(tempFile);
+      final snapshot = await uploadTask;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+
+      // Update message with real URL
+      await FirebaseFirestore.instance
+          .collection('events')
+          .doc(widget.eventId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'gifUrl': downloadUrl,
+        'uploading': false, // Upload complete
+      });
+
+      // Clean up temp file
+      await tempFile.delete();
+
+      // Create notifications for participants
+      await _createMessageNotifications(userData, 'gif');
+    } catch (e) {
+      // Update message to show upload failed
+      await FirebaseFirestore.instance
+          .collection('events')
+          .doc(widget.eventId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'uploadFailed': true,
+        'uploading': false,
+      });
+      
+      // Clean up temp file
+      await tempFile.delete();
+    }
+  }
+
+  // Upload and post image from keyboard
+  Future<void> _uploadAndPostImage(Uint8List bytes) async {
+    try {
+      // Create temporary file for the image
+      final tempDir = await getTemporaryDirectory();
+      final fileName = 'keyboard_image_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final tempFile = File('${tempDir.path}/$fileName');
+      await tempFile.writeAsBytes(bytes);
+
+      // Compress and upload the image (reuse existing logic)
+      final compressedFile = await _compressImage(tempFile);
+      if (compressedFile != null) {
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('chat_photos')
+            .child('${widget.eventId}_${DateTime.now().millisecondsSinceEpoch}.jpg');
+
+        final uploadTask = storageRef.putFile(compressedFile);
+        final snapshot = await uploadTask;
+        final downloadUrl = await snapshot.ref.getDownloadURL();
+
+        // Clean up temp files
+        await tempFile.delete();
+        await compressedFile.delete();
+
+        // Post message with photo URL
+        await _postMessage(photoUrl: downloadUrl);
+        
+        _showSnackBar('Photo posted! 📸');
+      }
+    } catch (e) {
+      _showSnackBar('Failed to upload image', backgroundColor: Colors.red[600]);
+    }
+  }
+
+  // Build GIF image widget (handles both local and network URLs)
+  Widget _buildGifImage(Map<String, dynamic> data) {
+    final gifUrl = data['gifUrl'] as String;
+    final isLocalFile = gifUrl.startsWith('/');
+    
+    if (isLocalFile) {
+      // Show local file while uploading
+      return Image.file(
+        File(gifUrl),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            height: 150,
+            color: Colors.grey[200],
+            child: const Center(
+              child: Icon(Icons.error),
+            ),
+          );
+        },
+      );
+    } else {
+      // Show network image after upload
+      return Image.network(
+        gifUrl,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Container(
+            height: 150,
+            color: Colors.grey[200],
+            child: const Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            height: 150,
+            color: Colors.grey[200],
+            child: const Center(
+              child: Icon(Icons.error),
+            ),
+          );
+        },
+      );
+    }
+  }
+
+  // Create notifications for message participants
+  Future<void> _createMessageNotifications(Map<String, dynamic> userData, String messageType) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final participants = List<String>.from(eventData['participants'] ?? []);
+    final creatorId = eventData['creatorId'] as String?;
+    final userFullName = '${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}'.trim();
+    
+    // Collect all users who should be notified (participants + creator, excluding poster)
+    Set<String> usersToNotify = {};
+    usersToNotify.addAll(participants.where((id) => id != user.uid));
+    if (creatorId != null && creatorId != user.uid) {
+      usersToNotify.add(creatorId);
+    }
+
+    // Create notifications
+    final batch = FirebaseFirestore.instance.batch();
+    for (final userId in usersToNotify) {
+      final notificationRef = FirebaseFirestore.instance.collection('notifications').doc();
+      
+      batch.set(notificationRef, {
+        'userId': userId,
+        'type': 'event_message',
+        'title': 'New Message',
+        'message': '$userFullName posted a message in "${eventData['eventName'] ?? 'event'}"',
+        'timestamp': FieldValue.serverTimestamp(),
+        'isRead': false,
+        'data': {
+          'eventId': widget.eventId,
+          'eventName': eventData['eventName'],
+          'eventType': eventData['eventType'],
+          'posterName': userFullName,
+          'posterId': user.uid,
+          'posterPhotoUrl': userData['photoUrl'],
+          'messageType': messageType,
+        },
+      });
+    }
+    
+    await batch.commit();
+  }
+
   // Toggle emoji reaction
   Future<void> _toggleReaction(String messageId, String emoji) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -430,7 +770,13 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
           reactions[emoji]!.add(user.uid);
         }
 
-        transaction.update(messageRef, {'reactions': reactions});
+        // Use timestamp to ensure change detection
+        final updatedData = {
+          'reactions': reactions,
+          'lastReactionUpdate': FieldValue.serverTimestamp(),
+        };
+        
+        transaction.update(messageRef, updatedData);
       });
     } catch (e) {
       _showSnackBar('Failed to add reaction', backgroundColor: Colors.red[600]);
@@ -501,6 +847,68 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
     }
   }
 
+  Future<void> _searchUsersInModal(String query, StateSetter setModalState, Set<String> modalInvitedUsers) async {
+    if (query.trim().isEmpty) {
+      setModalState(() {
+        _searchResults = [];
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setModalState(() => _isSearching = true);
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      // Use current state instead of widget data for real-time updates
+      final participants = currentParticipants;
+      final excludeIds = {...participants, ...modalInvitedUsers, user.uid};
+
+      final usersSnapshot = await FirebaseFirestore.instance.collection('users').get();
+      final queryLower = query.toLowerCase();
+
+      final results = usersSnapshot.docs
+          .where((doc) {
+            final data = doc.data();
+            final firstName = (data['firstName'] ?? '').toString().toLowerCase();
+            final lastName = (data['lastName'] ?? '').toString().toLowerCase();
+            final fullName = '$firstName $lastName';
+            final phoneNumber = data['phoneNumber']?.toString() ?? '';
+
+            return !excludeIds.contains(doc.id) &&
+                   (firstName.contains(queryLower) || 
+                    lastName.contains(queryLower) ||
+                    fullName.contains(queryLower) ||
+                    phoneNumber.contains(query));
+          })
+          .map((doc) {
+            final data = doc.data();
+            return {
+              'uid': doc.id,
+              'firstName': data['firstName'] ?? '',
+              'lastName': data['lastName'] ?? '',
+              'name': '${data['firstName'] ?? ''} ${data['lastName'] ?? ''}'.trim(),
+              'phoneNumber': data['phoneNumber'],
+              'photoUrl': data['photoUrl'],
+            };
+          })
+          .take(10)
+          .toList();
+
+      setModalState(() {
+        _searchResults = results;
+        _isSearching = false;
+      });
+    } catch (e) {
+      setModalState(() {
+        _isSearching = false;
+        _searchResults = [];
+      });
+    }
+  }
+
   // Invite user to event
   Future<void> _inviteUser(Map<String, dynamic> userData) async {
     try {
@@ -517,6 +925,9 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         // Get current user's profile data for the notification
         final currentUser = FirebaseAuth.instance.currentUser;
         String? inviterPhotoUrl;
+        String inviterFirstName = 'Someone';
+        String inviterFullName = 'Someone';
+        
         if (currentUser != null) {
           final currentUserDoc = await FirebaseFirestore.instance
               .collection('users')
@@ -524,26 +935,27 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
               .get();
           final currentUserData = currentUserDoc.data() ?? {};
           inviterPhotoUrl = currentUserData['photoUrl'];
+          final firstName = currentUserData['firstName'] ?? '';
+          final lastName = currentUserData['lastName'] ?? '';
+          inviterFirstName = firstName.isNotEmpty ? firstName : 'Someone';
+          inviterFullName = '$firstName $lastName'.trim();
+          if (inviterFullName.isEmpty) inviterFullName = 'Someone';
         }
-
-        // Create notification with enhanced event details
+        
+        // Create notification with simplified format
+        final notificationMessage = '$inviterFirstName invited you to ${widget.eventData['eventName']}';
+        print('DEBUG: Creating invitation notification with message: $notificationMessage');
+        
         await FirebaseFirestore.instance.collection('notifications').add({
           'userId': userData['uid'],
           'type': 'event_invitation',
           'title': 'Event Invitation',
-          'message': 'You\'ve been invited to ${widget.eventData['eventName']}',
+          'message': notificationMessage,
           'data': {
             'eventId': widget.eventId,
             'eventName': widget.eventData['eventName'],
-            'eventType': widget.eventData['eventType'],
-            'eventDate': widget.eventData['date'],
-            'eventTime': widget.eventData['startTime'],
-            'eventAddress': widget.eventData['address'],
-            'eventPace': widget.eventData['pace'],
-            'eventDistance': widget.eventData['distance'],
-            'eventDistanceUnit': widget.eventData['distanceUnit'],
             'fromUserId': currentUser?.uid,
-            'fromUserName': widget.eventData['creatorName'],
+            'fromUserName': inviterFullName,
             'fromUserPhotoUrl': inviterPhotoUrl,
           },
           'isRead': false,
@@ -614,29 +1026,43 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-    final isOwnEvent = widget.eventData['creatorId'] == user?.uid;
-    final isParticipant = currentParticipants.contains(user?.uid);
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: _buildAppBar(isOwnEvent),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
             .collection('events')
             .doc(widget.eventId)
             .snapshots(),
         builder: (context, snapshot) {
-          // Update local state when we receive real-time updates from Firestore
+          // Get the current event data from StreamBuilder or fallback to widget.eventData
+          Map<String, dynamic> currentEventData = widget.eventData;
+          
           if (snapshot.hasData && snapshot.data!.exists) {
-            final eventData = snapshot.data!.data() as Map<String, dynamic>?;
-            if (eventData != null) {
+            final streamEventData = snapshot.data!.data() as Map<String, dynamic>?;
+            if (streamEventData != null) {
+              // Use stream data if available, otherwise fallback to widget.eventData
+              currentEventData = streamEventData;
+              
+              // Update the instance variable for use in getter
+              if (_currentEventData != streamEventData) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() {
+                      _currentEventData = streamEventData;
+                    });
+                  }
+                });
+              }
+              
+              // Update local state when we receive real-time updates from Firestore
               // Only update if we don't have local changes pending
               // This prevents overriding optimistic updates while they're in progress
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) {
-                  final newParticipants = List<String>.from(eventData['participants'] ?? []);
-                  final newParticipantsData = List<Map<String, dynamic>>.from(eventData['participantsData'] ?? []);
-                  final newInvitedUsers = List<String>.from(eventData['invitedUsers'] ?? []);
+                  final newParticipants = List<String>.from(streamEventData['participants'] ?? []);
+                  final newParticipantsData = List<Map<String, dynamic>>.from(streamEventData['participantsData'] ?? []);
+                  final newInvitedUsers = List<String>.from(streamEventData['invitedUsers'] ?? []);
                   
                   // Update state if there are actual changes
                   bool hasChanges = false;
@@ -666,7 +1092,33 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
             }
           }
           
-          return SingleChildScrollView(
+          // Show loading if we don't have essential event data and are still loading
+          if ((currentEventData.isEmpty || !currentEventData.containsKey('creatorId')) && 
+              snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
+          // Show loading if snapshot has no data yet
+          if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
+          // Show error if event doesn't exist
+          if (snapshot.hasData && !snapshot.data!.exists) {
+            return const Scaffold(
+              body: Center(
+                child: Text('Event not found'),
+              ),
+            );
+          }
+          
+          final isOwnEvent = currentEventData['creatorId'] == user?.uid;
+          final isParticipant = currentParticipants.contains(user?.uid);
+          
+          return Scaffold(
+            backgroundColor: Colors.grey[50],
+            appBar: _buildAppBar(isOwnEvent),
+            body: SingleChildScrollView(
             child: Column(
               children: [
                 // Event Header Card
@@ -690,10 +1142,11 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 const SizedBox(height: 100), // Space for FAB
               ],
             ),
+            ),
+            floatingActionButton: _buildFloatingActionButton(isOwnEvent, isParticipant),
           );
         },
       ),
-      floatingActionButton: _buildFloatingActionButton(isOwnEvent, isParticipant),
     );
   }
   
@@ -759,7 +1212,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         IconButton(
           icon: const Icon(Icons.share, color: Colors.black),
           onPressed: () {
-            Share.share('Check out this event: ${widget.eventData['eventName']}');
+            Share.share('Check out this event: ${eventData['eventName']}');
           },
         ),
       ],
@@ -798,16 +1251,16 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: widget.eventData['eventType'] == 'run' 
+                    color: eventData['eventType'] == 'run' 
                         ? Colors.orange[100] 
                         : Colors.green[100],
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
-                    widget.eventData['eventType'] == 'run' 
+                    eventData['eventType'] == 'run' 
                         ? Icons.directions_run 
                         : Icons.directions_bike,
-                    color: widget.eventData['eventType'] == 'run' 
+                    color: eventData['eventType'] == 'run' 
                         ? Colors.orange[700] 
                         : Colors.green[700],
                     size: 28,
@@ -819,7 +1272,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 // Title
                 Expanded(
                   child: Text(
-                    widget.eventData['eventName'] ?? 'Event',
+                    eventData['eventName'] ?? 'Event',
                     style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
@@ -839,7 +1292,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 Builder(
                   builder: (context) {
                     // Try to get creator photo from event data first, then from participants data
-                    String? creatorPhotoUrl = widget.eventData['creatorPhotoUrl'];
+                    String? creatorPhotoUrl = eventData['creatorPhotoUrl'];
                     
                     if (creatorPhotoUrl == null) {
                       // Fallback: get from participants data
@@ -875,7 +1328,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                           style: TextStyle(color: Colors.grey),
                         ),
                         TextSpan(
-                          text: widget.eventData['creatorName'] ?? 'Unknown',
+                          text: eventData['creatorName'] ?? 'Unknown',
                           style: const TextStyle(
                             fontWeight: FontWeight.w600,
                             color: Colors.black,
@@ -892,7 +1345,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
             
             // When info - simple and bold
             Text(
-              '${_formatEventDate(widget.eventData['date'])}${widget.eventData['startTime'] != null ? ' at ${widget.eventData['startTime']}' : ''}',
+              '${_formatEventDate(eventData['date'])}${eventData['startTime'] != null ? ' at ${eventData['startTime']}' : ''}',
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -924,7 +1377,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Description
-          if (widget.eventData['description']?.isNotEmpty == true) ...[
+          if (eventData['description']?.isNotEmpty == true) ...[
             const Text(
               'Description',
               style: TextStyle(
@@ -935,7 +1388,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
             ),
             const SizedBox(height: 12),
             Text(
-              widget.eventData['description'],
+              eventData['description'],
               style: const TextStyle(
                 fontSize: 16,
                 color: Colors.grey,
@@ -949,19 +1402,19 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
           _buildDetailItem(
             icon: Icons.location_on,
             label: 'Location',
-            value: widget.eventData['address'] ?? 'Not specified',
+            value: eventData['address'] ?? 'Not specified',
             color: Colors.red,
           ),
           
           const SizedBox(height: 16),
           
           _buildDetailItem(
-            icon: widget.eventData['eventType'] == 'run' 
+            icon: eventData['eventType'] == 'run' 
                 ? Icons.directions_run 
                 : Icons.directions_bike,
             label: 'Type',
-            value: _getEventTypeLabel(widget.eventData),
-            color: widget.eventData['eventType'] == 'run' 
+            value: _getEventTypeLabel(eventData),
+            color: eventData['eventType'] == 'run' 
                 ? Colors.orange 
                 : Colors.green,
           ),
@@ -971,16 +1424,16 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
           _buildDetailItem(
             icon: Icons.speed,
             label: 'Pace',
-            value: _getPaceLabel(widget.eventData['pace'] ?? ''),
+            value: _getPaceLabel(eventData['pace'] ?? ''),
             color: Colors.orange,
           ),
           
-          if (widget.eventData['distance'] != null) ...[
+          if (eventData['distance'] != null) ...[
             const SizedBox(height: 16),
             _buildDetailItem(
               icon: Icons.straighten,
               label: 'Distance',
-              value: '${widget.eventData['distance']} ${widget.eventData['distanceUnit'] ?? 'mi'}',
+              value: '${eventData['distance']} ${eventData['distanceUnit'] ?? 'mi'}',
               color: Colors.green,
             ),
           ],
@@ -1310,32 +1763,35 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
       ),
       child: Row(
         children: [
-          Stack(
-            children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: Colors.grey[300],
-                backgroundImage: photoUrl != null && photoUrl.isNotEmpty
-                    ? NetworkImage(photoUrl)
-                    : null,
-                child: photoUrl == null || photoUrl.isEmpty
-                    ? Icon(Icons.person, size: 20, color: Colors.grey[600])
-                    : null,
-              ),
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: isParticipant ? Colors.green[500] : Colors.orange[500],
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 1),
+          GestureDetector(
+            onTap: isCurrentUser ? null : () => _showPublicProfileModal(person),
+            child: Stack(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: Colors.grey[300],
+                  backgroundImage: photoUrl != null && photoUrl.isNotEmpty
+                      ? NetworkImage(photoUrl)
+                      : null,
+                  child: photoUrl == null || photoUrl.isEmpty
+                      ? Icon(Icons.person, size: 20, color: Colors.grey[600])
+                      : null,
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: isParticipant ? Colors.green[500] : Colors.orange[500],
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1),
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -1345,12 +1801,15 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        name,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                      child: GestureDetector(
+                        onTap: isCurrentUser ? null : () => _showPublicProfileModal(person),
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
                         ),
                       ),
                     ),
@@ -1391,6 +1850,55 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
               ],
             ),
           ),
+          // Friend badge for non-current users
+          if (!isCurrentUser)
+            FutureBuilder<DocumentSnapshot>(
+              future: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(FirebaseAuth.instance.currentUser?.uid)
+                  .get(),
+              builder: (context, snapshot) {
+                bool isFriend = false;
+                
+                if (snapshot.hasData && snapshot.data!.exists) {
+                  final currentUserData = snapshot.data!.data() as Map<String, dynamic>?;
+                  final friends = List<Map<String, dynamic>>.from(currentUserData?['friends'] ?? []);
+                  isFriend = friends.any((friend) => friend['uid'] == person['uid']);
+                }
+                
+                if (isFriend) {
+                  return Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.green[100],
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.check_circle,
+                          size: 10,
+                          color: Colors.green[700],
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          'Friend',
+                          style: TextStyle(
+                            color: Colors.green[700],
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                
+                return const SizedBox.shrink();
+              },
+            ),
           if (isOwnEvent && !isCurrentUser)
             IconButton(
               onPressed: () {
@@ -1428,7 +1936,70 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Messages List with Header
+          // Chat Header (moved from inside StreamBuilder)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+            child: Row(
+              children: [
+                const Text(
+                  'Chat',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Message count will be added via StreamBuilder
+                StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('events')
+                      .doc(widget.eventId)
+                      .collection('messages')
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    final totalCount = snapshot.data?.docs.length ?? 0;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[100],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.blue[300]!, width: 1),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.chat_bubble, size: 12, color: Colors.blue[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$totalCount',
+                            style: TextStyle(
+                              color: Colors.blue[700],
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          
+          // Message Input (moved to top)
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: _buildMessageInput(),
+          ),
+          
+          // Messages List
           StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('events')
@@ -1437,74 +2008,105 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 .orderBy('timestamp', descending: true)
                 .snapshots(),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
+              // Handle connection states more specifically
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                // Show loading only for initial load
+                if (!snapshot.hasData) {
+                  return const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+              }
+
+              if (snapshot.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.error_outline, size: 48, color: Colors.red[400]),
+                        const SizedBox(height: 12),
+                        const Text('Error loading messages'),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: () => setState(() {}),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              // For active connection, show empty state if no messages
+              if (snapshot.connectionState == ConnectionState.active && 
+                  snapshot.hasData && 
+                  snapshot.data!.docs.isEmpty) {
                 return Column(
                   children: [
-                    // Chat Header
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                      child: const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Chat',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
-                          ),
+                      padding: const EdgeInsets.all(24),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.chat_bubble_outline, size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No messages yet',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Be the first to start the conversation!',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator()),
                     ),
                   ],
                 );
               }
 
-              final allMessages = snapshot.data!.docs;
+              // Default fallback for any other case without data
+              if (!snapshot.hasData || snapshot.data == null) {
+                return Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.chat_bubble_outline, size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No messages yet',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Be the first to start the conversation!',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }
+
+              final allMessages = snapshot.data!.docs.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return data['isPlaceholder'] != true;
+              }).toList();
               final totalCount = allMessages.length;
+              // Messages are already ordered newest first, just take first N
               final displayedMessages = _showAllMessages ? allMessages : allMessages.take(3).toList();
               
               return Column(
                 children: [
-                  // Chat Header with count
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Row(
-                        children: [
-                          const Text(
-                            'Chat',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '$totalCount',
-                              style: TextStyle(
-                                color: Colors.grey[700],
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  
                   // Messages content
                   if (totalCount == 0)
                     Padding(
@@ -1584,25 +2186,12 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                             ),
                           ),
                         
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 24),
                       ],
                     ),
                 ],
               );
             },
-          ),
-          
-          // Message Input
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(20),
-                bottomRight: Radius.circular(20),
-              ),
-            ),
-            child: _buildMessageInput(),
           ),
         ],
       ),
@@ -1617,36 +2206,15 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
     final timestamp = data['timestamp'] as Timestamp?;
     final reactions = Map<String, List<dynamic>>.from(data['reactions'] ?? {});
     final isOwnMessage = user?.uid == userId;
+    final photoUrl = data['photoUrl'] as String?;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Avatar
-          FutureBuilder<DocumentSnapshot>(
-            future: userId != null
-                ? FirebaseFirestore.instance.collection('users').doc(userId).get()
-                : null,
-            builder: (context, snapshot) {
-              String? photoUrl;
-              if (snapshot.hasData && snapshot.data?.exists == true) {
-                final userData = snapshot.data?.data() as Map<String, dynamic>?;
-                photoUrl = userData?['photoUrl'] as String?;
-              }
-              
-              return CircleAvatar(
-                radius: 18,
-                backgroundColor: Colors.grey[300],
-                backgroundImage: photoUrl != null && photoUrl.isNotEmpty
-                    ? NetworkImage(photoUrl)
-                    : null,
-                child: photoUrl == null || photoUrl.isEmpty
-                    ? Icon(Icons.person, size: 18, color: Colors.grey[600])
-                    : null,
-              );
-            },
-          ),
+          // Avatar - using photo from message data first, then cached user data
+          _buildMessageAvatar(userId, photoUrl),
           
           const SizedBox(width: 12),
           
@@ -1659,7 +2227,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                 Row(
                   children: [
                     Text(
-                      userName,
+                      isOwnMessage ? '$userName (you)' : userName,
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
@@ -1709,31 +2277,57 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                       maxWidth: 200,
                       maxHeight: 200,
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        data['gifUrl'],
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            height: 150,
-                            color: Colors.grey[200],
-                            child: const Center(
-                              child: CircularProgressIndicator(),
+                    child: Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: _buildGifImage(data),
+                        ),
+                        
+                        // Upload indicator overlay
+                        if (data['uploading'] == true)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              ),
                             ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            height: 150,
-                            color: Colors.grey[200],
-                            child: const Center(
-                              child: Icon(Icons.error),
+                          ),
+                          
+                        // Upload failed indicator
+                        if (data['uploadFailed'] == true)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.8),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.error, color: Colors.white, size: 32),
+                                    SizedBox(height: 8),
+                                    Text(
+                                      'Upload Failed',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                      ],
                     ),
                   ),
                 
@@ -1865,29 +2459,53 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
           onPressed: () => _showPhotoOptions(),
         ),
         Expanded(
-          child: TextField(
-            controller: _messageController,
-            decoration: InputDecoration(
-              hintText: 'Type a message...',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(24),
-                borderSide: BorderSide.none,
+          child: GestureDetector(
+            onTap: () {
+              // Ensure focus and keyboard appear
+              if (!_messageFocusNode.hasFocus) {
+                FocusScope.of(context).requestFocus(_messageFocusNode);
+              }
+            },
+            child: TextField(
+              controller: _messageController,
+              focusNode: _messageFocusNode,
+              decoration: InputDecoration(
+                hintText: 'Type a message...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               ),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              maxLines: null,
+              onSubmitted: (_) => _postMessage(),
+              onTap: () {
+                // Additional tap handling to ensure keyboard appears
+                if (!_messageFocusNode.hasFocus) {
+                  _messageFocusNode.requestFocus();
+                }
+              },
+              contentInsertionConfiguration: ContentInsertionConfiguration(
+                onContentInserted: (KeyboardInsertedContent data) {
+                  _handleKeyboardMediaInsertion(data);
+                },
+                allowedMimeTypes: const ['image/gif', 'image/png', 'image/jpeg', 'image/webp'],
+              ),
             ),
-            maxLines: null,
-            onSubmitted: (_) => _postMessage(),
           ),
         ),
         const SizedBox(width: 8),
         Container(
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
             color: Colors.black,
             shape: BoxShape.circle,
           ),
           child: IconButton(
+            padding: EdgeInsets.zero,
             onPressed: _isPosting ? null : _postMessage,
             icon: _isPosting
                 ? const SizedBox(
@@ -1898,7 +2516,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                       valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   )
-                : const Icon(Icons.send, color: Colors.white, size: 20),
+                : const Icon(Icons.send, color: Colors.white, size: 16),
           ),
         ),
       ],
@@ -1926,7 +2544,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
       
       return AnimatedGradientBorder(
         borderSize: 2,
-        glowSize: 3,
+        glowSize: 0,
         gradientColors: [
           Colors.blue[300]!,
           Colors.purple[300]!,
@@ -1982,7 +2600,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         
         return AnimatedGradientBorder(
           borderSize: 2,
-          glowSize: 3,
+          glowSize: 0,
           gradientColors: [
             Colors.blue[300]!,
             Colors.purple[300]!,
@@ -2009,11 +2627,14 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
   }
 
   void _showInviteModal() {
+    Set<String> modalInvitedUsers = Set<String>.from(currentInvitedUsers);
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
         height: MediaQuery.of(context).size.height * 0.85,
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -2078,7 +2699,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                         borderSide: const BorderSide(color: Colors.black),
                       ),
                     ),
-                    onChanged: _searchUsers,
+                    onChanged: (query) => _searchUsersInModal(query, setModalState, modalInvitedUsers),
                   ),
                 ],
               ),
@@ -2103,12 +2724,11 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                               ),
                             )
                           : ListView.builder(
-                              padding: const EdgeInsets.all(20),
                               itemCount: _searchResults.length,
                               itemBuilder: (context, index) {
                                 final userData = _searchResults[index];
                                 return Container(
-                                  margin: const EdgeInsets.only(bottom: 12),
+                                  margin: EdgeInsets.fromLTRB(20, index == 0 ? 20 : 0, 20, 12),
                                   padding: const EdgeInsets.all(16),
                                   decoration: BoxDecoration(
                                     color: Colors.grey[50],
@@ -2152,14 +2772,23 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                                         ),
                                       ),
                                       ShadButton(
-                                        onPressed: () {
+                                        onPressed: modalInvitedUsers.contains(userData['uid']) ? null : () {
+                                          // Update local state immediately
+                                          setModalState(() {
+                                            modalInvitedUsers.add(userData['uid']);
+                                          });
+                                          // Then update backend
                                           _inviteUser(userData);
                                         },
-                                        backgroundColor: Colors.black,
-                                        child: const Text(
-                                          'Invite',
+                                        backgroundColor: modalInvitedUsers.contains(userData['uid']) 
+                                            ? Colors.grey[400] 
+                                            : Colors.black,
+                                        child: Text(
+                                          modalInvitedUsers.contains(userData['uid']) ? 'Invited' : 'Invite',
                                           style: TextStyle(
-                                            color: Colors.white,
+                                            color: modalInvitedUsers.contains(userData['uid']) 
+                                                ? Colors.grey[600] 
+                                                : Colors.white,
                                             fontSize: 14,
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -2172,6 +2801,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
                             ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -2327,6 +2957,298 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
         },
       ),
     );
+  }
+
+  void _showPublicProfileModal(Map<String, dynamic> userData) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => FutureBuilder<DocumentSnapshot>(
+        future: FirebaseFirestore.instance.collection('users').doc(userData['uid']).get(),
+        builder: (context, snapshot) {
+          Map<String, dynamic> fullUserData = userData;
+          
+          if (snapshot.hasData && snapshot.data!.exists) {
+            final firestoreData = snapshot.data!.data() as Map<String, dynamic>?;
+            if (firestoreData != null) {
+              fullUserData = {
+                ...userData,
+                ...firestoreData,
+                'name': fullUserData['name'] ?? '${firestoreData['firstName'] ?? ''} ${firestoreData['lastName'] ?? ''}'.trim(),
+              };
+            }
+          }
+          
+          return Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
+        ),
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Profile',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(Icons.close, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Profile Content
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  children: [
+                    // Profile Picture and Name
+                    Column(
+                      children: [
+                        CircleAvatar(
+                          radius: 50,
+                          backgroundColor: Colors.grey[300],
+                          backgroundImage: fullUserData['photoUrl'] != null && fullUserData['photoUrl'].isNotEmpty
+                              ? NetworkImage(fullUserData['photoUrl'])
+                              : null,
+                          child: fullUserData['photoUrl'] == null || fullUserData['photoUrl'].isEmpty
+                              ? Icon(Icons.person, size: 50, color: Colors.grey[600])
+                              : null,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          fullUserData['name'] ?? 'Unknown User',
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+                    
+                    // Public Profile Info
+                    if (fullUserData['eventsAttended'] != null) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.grey[200]!),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [Colors.blue[600]!, Colors.purple[600]!],
+                                    ),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.event,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Events Attended',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${fullUserData['eventsAttended'] ?? 0}',
+                                      style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    
+                    const Spacer(),
+                    
+                    // Friend/Invite Actions
+                    FutureBuilder<DocumentSnapshot>(
+                      future: FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(FirebaseAuth.instance.currentUser?.uid)
+                          .get(),
+                      builder: (context, currentUserSnapshot) {
+                        bool isFriend = false;
+                        
+                        if (currentUserSnapshot.hasData && currentUserSnapshot.data!.exists) {
+                          final currentUserData = currentUserSnapshot.data!.data() as Map<String, dynamic>?;
+                          final friends = List<Map<String, dynamic>>.from(currentUserData?['friends'] ?? []);
+                          isFriend = friends.any((friend) => friend['uid'] == fullUserData['uid']);
+                        }
+                        
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 20),
+                          child: Column(
+                            children: [
+                              // Friend/Invite Button
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: isFriend ? null : () {
+                                    // Handle friend request logic here
+                                    _sendFriendRequest(fullUserData);
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: isFriend ? Colors.grey[400] : Colors.blue[600],
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        isFriend ? Icons.check : Icons.person_add,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        isFriend ? 'Friends' : 'Send Friend Request',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              
+                              const SizedBox(height: 12),
+                              
+                              // Close Button
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.grey[200],
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Close',
+                                    style: TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _sendFriendRequest(Map<String, dynamic> userData) async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) return;
+
+      // Get current user data
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
+      
+      final currentUserData = currentUserDoc.data() ?? {};
+      final senderName = '${currentUserData['firstName'] ?? ''} ${currentUserData['lastName'] ?? ''}'.trim();
+      
+      // Create friend request notification
+      await FirebaseFirestore.instance.collection('notifications').add({
+        'userId': userData['uid'],
+        'type': 'friend_request',
+        'title': 'Friend Request',
+        'message': '$senderName sent you a friend request',
+        'timestamp': FieldValue.serverTimestamp(),
+        'isRead': false,
+        'data': {
+          'fromUserId': currentUser.uid,
+          'fromUserName': senderName,
+          'fromUserPhotoUrl': currentUserData['photoUrl'],
+        },
+      });
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Friend request sent to ${userData['name'] ?? 'user'}'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      
+      // Close the modal
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to send friend request'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _showMessageOptions(String messageId) {
@@ -2701,115 +3623,6 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
     return eventType.isNotEmpty ? eventType[0].toUpperCase() + eventType.substring(1) : 'Event';
   }
   
-  void _showGifPicker() {
-    // Popular GIF URLs for demonstration - in a real app, you'd integrate with Giphy API
-    final popularGifs = [
-      'https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif', // thumbs up
-      'https://media.giphy.com/media/l3q2XhfQ8oCkm1Ts4/giphy.gif', // celebration
-      'https://media.giphy.com/media/26u4lOMA8JKSnL9Uk/giphy.gif', // running
-      'https://media.giphy.com/media/xT9IgG50Fb7Mi0prBC/giphy.gif', // cycling
-      'https://media.giphy.com/media/3o7abldj0b3rxrZUxO/giphy.gif', // high five
-      'https://media.giphy.com/media/kyLYXonQYYfwYDIeZl/giphy.gif', // workout
-      'https://media.giphy.com/media/l1J9FiGxR61OcF2mI/giphy.gif', // yes
-      'https://media.giphy.com/media/ZdlpVW7xjfIZmvVsms/giphy.gif', // perfect
-      'https://media.giphy.com/media/l0HlHFRbmaZtBRhXG/giphy.gif', // excited
-      'https://media.giphy.com/media/3oz8xIsloV7zOmt81G/giphy.gif', // amazing
-    ];
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.4,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Choose a GIF',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            // GIF Grid
-            Expanded(
-              child: GridView.builder(
-                padding: const EdgeInsets.all(16),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1.2,
-                ),
-                itemCount: popularGifs.length,
-                itemBuilder: (context, index) {
-                  final gifUrl = popularGifs[index];
-                  return GestureDetector(
-                    onTap: () {
-                      Navigator.pop(context);
-                      _postMessage(gifUrl: gifUrl);
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[300]!),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(11),
-                        child: Image.network(
-                          gifUrl,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Container(
-                              color: Colors.grey[200],
-                              child: const Center(
-                                child: CircularProgressIndicator(),
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              color: Colors.grey[200],
-                              child: const Center(
-                                child: Icon(Icons.error),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
   
   // Image compression helper
   Future<File?> _compressImage(File imageFile) async {
@@ -2860,7 +3673,7 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
             ),
             const SizedBox(height: 16),
             const Text(
-              'Add Photo',
+              'Add Media',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -2988,4 +3801,34 @@ class _EventDetailPageState extends State<EventDetailPage> with TickerProviderSt
       _showSnackBar('Failed to upload photo', backgroundColor: Colors.red[600]);
     }
   }
+
+  // Optimized avatar widget using cached user data
+  Widget _buildMessageAvatar(String? userId, String? messagePhotoUrl) {
+    if (userId == null) {
+      return CircleAvatar(
+        radius: 18,
+        backgroundColor: Colors.grey[300],
+        child: Icon(Icons.person, size: 18, color: Colors.grey[600]),
+      );
+    }
+
+    // Use photo URL from message data first, then fall back to cached user data
+    String? photoUrl = messagePhotoUrl;
+    if (photoUrl == null || photoUrl.isEmpty) {
+      final userData = _getUserDataFromCache(userId);
+      photoUrl = userData?['photoUrl'] as String?;
+    }
+
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: Colors.grey[300],
+      backgroundImage: photoUrl != null && photoUrl.isNotEmpty
+          ? NetworkImage(photoUrl)
+          : null,
+      child: photoUrl == null || photoUrl.isEmpty
+          ? Icon(Icons.person, size: 18, color: Colors.grey[600])
+          : null,
+    );
+  }
 }
+

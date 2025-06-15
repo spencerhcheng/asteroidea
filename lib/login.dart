@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'onboarding_page.dart';
+import 'onboarding.dart';
 import 'main_navigation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';

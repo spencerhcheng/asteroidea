@@ -4,12 +4,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:path/path.dart' as path;
+import 'widgets/onboarding_progress.dart';
+import 'widgets/onboarding_header.dart';
+import 'widgets/activity_selection_card.dart';
+import 'services/onboarding_service.dart';
 import 'main_navigation.dart';
 
 class OnboardingPage extends StatefulWidget {
@@ -125,67 +123,6 @@ class _OnboardingPageState extends State<OnboardingPage>
     }
   }
 
-  Future<File?> _compressImage(File imageFile) async {
-    try {
-      final dir = Directory.systemTemp;
-      final fileName = path.basename(imageFile.path);
-      final targetPath = '${dir.path}/compressed_$fileName';
-
-      final compressedFile = await FlutterImageCompress.compressAndGetFile(
-        imageFile.absolute.path,
-        targetPath,
-        quality: 85,
-        minWidth: 400,
-        minHeight: 400,
-        format: CompressFormat.jpeg,
-      );
-
-      if (compressedFile != null) {
-        return File(compressedFile.path);
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<String?> _uploadProfilePhoto() async {
-    if (_profilePhoto == null) return null;
-
-    try {
-      setState(() => _isUploading = true);
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return null;
-
-      // Compress the image before uploading
-      final compressedPhoto = await _compressImage(_profilePhoto!);
-      if (compressedPhoto == null) {
-        setState(() => _isUploading = false);
-        return null;
-      }
-
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('profile_photos')
-          .child('${user.uid}.jpg');
-
-      final uploadTask = await ref.putFile(compressedPhoto);
-      final downloadUrl = await uploadTask.ref.getDownloadURL();
-
-      // Clean up temporary compressed file
-      try {
-        await compressedPhoto.delete();
-      } catch (e) {
-        // Failed to delete temporary file - not critical
-      }
-
-      setState(() => _isUploading = false);
-      return downloadUrl;
-    } catch (e) {
-      setState(() => _isUploading = false);
-      return null;
-    }
-  }
 
   Future<void> _getLocation() async {
     setState(() {
@@ -199,103 +136,43 @@ class _OnboardingPageState extends State<OnboardingPage>
       }
       if (permission == LocationPermission.deniedForever ||
           permission == LocationPermission.denied) {
-        setState(() {
-          _locationError = 'Location permission denied.';
-          _locationLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _locationError = 'Location permission denied.';
+            _locationLoading = false;
+          });
+        }
         return;
       }
       final pos = await Geolocator.getCurrentPosition();
       // Reverse geocode to ZIP (for demo, just set using lat/lon)
       // In production, use a proper reverse geocoding API
       // For now, just set usingLocation true and clear zip
-      setState(() {
-        _usingLocation = true;
-        _zipCode = '';
-        _locationLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _usingLocation = true;
+          _zipCode = '';
+          _locationLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _locationError = 'Could not get location.';
-        _locationLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _locationError = 'Could not get location.';
+          _locationLoading = false;
+        });
+      }
     }
   }
 
-  // Modern segmented progress indicator with flowing gradient
   Widget _buildProgress() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Back button or step text
-              GestureDetector(
-                onTap: _currentStep > 0 ? _previousStep : () {
-                  // Navigate back to login page on first step
-                  Navigator.of(context).pushReplacementNamed('/login');
-                },
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_back_ios,
-                      size: 16,
-                      color: Colors.blue[600],
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _currentStep > 0 ? 'Back' : 'Back to Login',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.blue[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                '${((_currentStep + 1) / 4 * 100).round()}%',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue[600],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // Segmented progress bar with flowing gradient
-          Row(
-            children: List.generate(4, (index) {
-              final isCompleted = index < _currentStep;
-              final isCurrent = index == _currentStep;
-
-              return Expanded(
-                child: Container(
-                  margin: EdgeInsets.only(right: index < 3 ? 4 : 0),
-                  height: 6,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    color: Colors.grey[200],
-                  ),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    width: double.infinity,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(3),
-                      color: isCompleted || isCurrent ? Colors.blue[600] : Colors.grey[200],
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ),
-        ],
-      ),
+    return OnboardingProgress(
+      currentStep: _currentStep,
+      totalSteps: 4,
+      onBack: _currentStep > 0 ? _previousStep : () {
+        Navigator.of(context).pushReplacementNamed('/login');
+      },
+      backLabel: _currentStep > 0 ? 'Back' : 'Back to Login',
     );
   }
 
@@ -309,42 +186,12 @@ class _OnboardingPageState extends State<OnboardingPage>
           children: [
             const SizedBox(height: 20),
 
-            // Header with emoji
-            Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.blue[100]!, Colors.purple[100]!],
-                ),
-                shape: BoxShape.circle,
-              ),
-              child: const Center(
-                child: Text('👋', style: TextStyle(fontSize: 30)),
-              ),
+            OnboardingHeader(
+              emoji: '👋',
+              title: 'Let\'s get to know you!',
+              subtitle: 'Tell us a bit about yourself',
+              gradientColors: [Colors.blue[100]!, Colors.purple[100]!],
             ),
-
-            const SizedBox(height: 16),
-
-            const Text(
-              'Let\'s get to know you!',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 6),
-
-            Text(
-              'Tell us a bit about yourself',
-              style: TextStyle(fontSize: 15, color: Colors.grey[600]),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 24),
 
             // Profile Photo Section
             GestureDetector(
@@ -637,39 +484,11 @@ class _OnboardingPageState extends State<OnboardingPage>
         children: [
           const SizedBox(height: 20),
 
-          // Header
-          Container(
-            width: 70,
-            height: 70,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.orange[100]!, Colors.red[100]!],
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Center(
-              child: Text('🏃‍♀️', style: TextStyle(fontSize: 35)),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          const Text(
-            'What gets you moving?',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 6),
-
-          Text(
-            'Select the activities you enjoy.',
-            style: TextStyle(fontSize: 15, color: Colors.grey[600]),
-            textAlign: TextAlign.center,
+          OnboardingHeader(
+            emoji: '🏃‍♀️',
+            title: 'What gets you moving?',
+            subtitle: 'Select the activities you enjoy.',
+            gradientColors: [Colors.orange[100]!, Colors.red[100]!],
           ),
 
           const SizedBox(height: 30),
@@ -682,8 +501,38 @@ class _OnboardingPageState extends State<OnboardingPage>
             mainAxisSpacing: 12,
             childAspectRatio: 1.2,
             children: [
-              _buildActivityCard('Running', '🏃‍♂️', 'run', Colors.blue),
-              _buildActivityCard('Cycling', '🚴‍♀️', 'ride', Colors.green),
+              ActivitySelectionCard(
+                title: 'Running',
+                emoji: '🏃‍♂️',
+                value: 'run',
+                color: Colors.blue,
+                isSelected: _selectedActivities.contains('run'),
+                onTap: () {
+                  setState(() {
+                    if (_selectedActivities.contains('run')) {
+                      _selectedActivities.remove('run');
+                    } else {
+                      _selectedActivities.add('run');
+                    }
+                  });
+                },
+              ),
+              ActivitySelectionCard(
+                title: 'Cycling',
+                emoji: '🚴‍♀️',
+                value: 'ride',
+                color: Colors.green,
+                isSelected: _selectedActivities.contains('ride'),
+                onTap: () {
+                  setState(() {
+                    if (_selectedActivities.contains('ride')) {
+                      _selectedActivities.remove('ride');
+                    } else {
+                      _selectedActivities.add('ride');
+                    }
+                  });
+                },
+              ),
             ],
           ),
 
@@ -799,82 +648,6 @@ class _OnboardingPageState extends State<OnboardingPage>
     );
   }
 
-  Widget _buildActivityCard(
-    String title,
-    String emoji,
-    String value,
-    Color color,
-  ) {
-    final isSelected = _selectedActivities.contains(value);
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          if (isSelected) {
-            _selectedActivities.remove(value);
-          } else {
-            _selectedActivities.add(value);
-          }
-        });
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.1) : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? color : Colors.grey[300]!,
-            width: isSelected ? 2 : 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: isSelected
-                  ? color.withValues(alpha: 0.2)
-                  : Colors.black.withValues(alpha: 0.05),
-              blurRadius: isSelected ? 15 : 10,
-              spreadRadius: 0,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        child: Stack(
-          children: [
-            Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(emoji, style: const TextStyle(fontSize: 32)),
-                  const SizedBox(height: 8),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: isSelected ? color : Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isSelected)
-              Positioned(
-                top: 12,
-                right: 12,
-                child: Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.check, color: Colors.white, size: 16),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildStep3() {
     return SingleChildScrollView(
@@ -883,42 +656,12 @@ class _OnboardingPageState extends State<OnboardingPage>
         children: [
           const SizedBox(height: 20),
 
-          // Header with emoji
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.green[100]!, Colors.blue[100]!],
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Center(
-              child: Text('📍', style: TextStyle(fontSize: 30)),
-            ),
+          OnboardingHeader(
+            emoji: '📍',
+            title: 'Where are you?',
+            subtitle: 'Help us find events near you',
+            gradientColors: [Colors.green[100]!, Colors.blue[100]!],
           ),
-
-          const SizedBox(height: 16),
-
-          const Text(
-            'Where are you?',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 6),
-
-          Text(
-            'Help us find events near you',
-            style: TextStyle(fontSize: 15, color: Colors.grey[600]),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 24),
 
           Form(
             key: _formKeys[2],
@@ -1113,68 +856,6 @@ class _OnboardingPageState extends State<OnboardingPage>
     );
   }
 
-  // Save onboarding progress locally
-  Future<void> _saveLocalProgress() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('firstName', _firstName);
-    await prefs.setString('lastName', _lastName);
-    await prefs.setString('gender', _gender);
-    await prefs.setBool('photoSkipped', _photoSkipped);
-    await prefs.setStringList('activities', _selectedActivities.toList());
-    await prefs.setString('units', _units);
-    await prefs.setString('zipCode', _zipCode);
-    await prefs.setBool('usingLocation', _usingLocation);
-    await prefs.setBool('onboarding_complete', true);
-  }
-
-  // Save onboarding progress to Firestore
-  Future<void> _saveFirestoreProgress() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final data = {
-      'firstName': _firstName,
-      'lastName': _lastName,
-      'gender': _gender,
-      'photoSkipped': _photoSkipped,
-      'activities': _selectedActivities.toList(),
-      'zipCode': _zipCode,
-      'usingLocation': _usingLocation,
-      'onboardingComplete': true,
-    };
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .set(data, SetOptions(merge: true));
-  }
-
-  // Save onboarding progress to Firestore with photo URL
-  Future<void> _saveFirestoreProgressWithPhoto(String? photoUrl) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final data = {
-      'firstName': _firstName,
-      'lastName': _lastName,
-      'bio': '',
-      'gender': _gender,
-      'photoSkipped': _photoSkipped,
-      'activities': _selectedActivities.toList(),
-      'units': _units,
-      'zipCode': _zipCode,
-      'usingLocation': _usingLocation,
-      'onboardingComplete': true,
-      'phoneNumber': user.phoneNumber, // Preserve phone number from Firebase Auth
-      'updatedAt': FieldValue.serverTimestamp(),
-    };
-
-    if (photoUrl != null) {
-      data['photoUrl'] = photoUrl;
-    }
-
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .set(data, SetOptions(merge: true));
-  }
 
   // Step 4: Confirmation/Finish
   Widget _buildStep4() {
@@ -1184,39 +865,11 @@ class _OnboardingPageState extends State<OnboardingPage>
         children: [
           const SizedBox(height: 40),
 
-          // Header with emoji
-          Container(
-            width: 70,
-            height: 70,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.green[100]!, Colors.yellow[100]!],
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Center(
-              child: Text('🎉', style: TextStyle(fontSize: 35)),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          const Text(
-            'You\'re all set!',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 6),
-
-          Text(
-            'Ready to find your next adventure',
-            style: TextStyle(fontSize: 15, color: Colors.grey[600]),
-            textAlign: TextAlign.center,
+          OnboardingHeader(
+            emoji: '🎉',
+            title: 'You\'re all set!',
+            subtitle: 'Ready to find your next adventure',
+            gradientColors: [Colors.green[100]!, Colors.yellow[100]!],
           ),
 
           const SizedBox(height: 40),
@@ -1420,12 +1073,31 @@ class _OnboardingPageState extends State<OnboardingPage>
                       // Upload photo if selected
                       String? photoUrl;
                       if (_profilePhoto != null && !_photoSkipped) {
-                        photoUrl = await _uploadProfilePhoto();
+                        photoUrl = await OnboardingService.uploadProfilePhoto(_profilePhoto);
                       }
 
                       // Save progress with photo URL
-                      await _saveLocalProgress();
-                      await _saveFirestoreProgressWithPhoto(photoUrl);
+                      await OnboardingService.saveLocalProgress(
+                        firstName: _firstName,
+                        lastName: _lastName,
+                        gender: _gender,
+                        photoSkipped: _photoSkipped,
+                        selectedActivities: _selectedActivities,
+                        units: _units,
+                        zipCode: _zipCode,
+                        usingLocation: _usingLocation,
+                      );
+                      await OnboardingService.saveFirestoreProgressWithPhoto(
+                        firstName: _firstName,
+                        lastName: _lastName,
+                        gender: _gender,
+                        photoSkipped: _photoSkipped,
+                        selectedActivities: _selectedActivities,
+                        units: _units,
+                        zipCode: _zipCode,
+                        usingLocation: _usingLocation,
+                        photoUrl: photoUrl,
+                      );
 
                       if (!mounted) return;
                       Navigator.of(context).pushReplacementNamed('/main');

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
-import 'home_page.dart';
-import 'create_event_page.dart';
-import 'profile_page.dart';
+import 'home.dart';
+import 'create_event.dart';
+import 'profile.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
